@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>오징어 캐릭터 테스트</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 캔버스 드로잉 -->
+      <canvas id="scene"></canvas>
+      <aside class="panel">
+        <p class="eyebrow">ESCAPE ROOM / MODEL TEST</p>
+        <h1>오징어 캐릭터</h1>
+        <p id="status">모델을 불러오는 중입니다.</p>
+        <label for="animation">오징어 샘플</label>
+        <select id="animation" disabled>
+          <option>불러오는 중…</option>
+        </select>
+        <p class="help">바닥 클릭 또는 WASD로 8방향 이동할 수 있습니다.</p>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
