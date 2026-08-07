@@ -6,6 +6,7 @@ const canvas = document.querySelector('#scene');
 const panel = document.querySelector('.panel');
 const status = document.querySelector('#status');
 const animationSelect = document.querySelector('#animation');
+const mapSelect = document.querySelector('#map');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -57,6 +58,19 @@ grid.material.opacity = 0.32;
 grid.material.transparent = true;
 scene.add(grid);
 
+const navigationSurface = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    colorWrite: false,
+  }),
+);
+navigationSurface.rotation.x = -Math.PI / 2;
+navigationSurface.position.y = 0.02;
+scene.add(navigationSurface);
+
 const destinationMarker = new THREE.Mesh(
   new THREE.RingGeometry(0.22, 0.32, 40),
   new THREE.MeshBasicMaterial({
@@ -89,6 +103,10 @@ let squidMeshes = [];
 let loadedModel = null;
 let isMoving = false;
 let characterSpeed = 2.8;
+let activeMap = 'current';
+let officeMap = null;
+let officeMapPromise = null;
+let officeBounds = null;
 const modelHeadingCorrection = THREE.MathUtils.degToRad(-17);
 
 function updateCameraProjection() {
@@ -147,6 +165,19 @@ function showSquid(index) {
   centerSelectedSquid(selected);
 }
 
+function isInsideActiveMap(position) {
+  if (activeMap === 'office' && officeBounds) {
+    return (
+      position.x >= officeBounds.min.x &&
+      position.x <= officeBounds.max.x &&
+      position.z >= officeBounds.min.z &&
+      position.z <= officeBounds.max.z
+    );
+  }
+
+  return Math.hypot(position.x, position.z) <= 17.5;
+}
+
 function setDestination(event) {
   if (panel.contains(event.target)) return;
 
@@ -154,8 +185,12 @@ function setDestination(event) {
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
 
-  const hit = raycaster.intersectObject(floor, false)[0];
+  const hit = raycaster.intersectObject(navigationSurface, false)[0];
   if (!hit) return;
+  if (!isInsideActiveMap(hit.point)) {
+    status.textContent = '이동 가능한 맵 안쪽을 선택해 주세요.';
+    return;
+  }
 
   destination.copy(hit.point);
   destination.y = 0;
@@ -198,15 +233,10 @@ function updateKeyboardMovement(delta) {
     .normalize();
 
   movementDirection.copy(keyboardDirection);
+  const previousPosition = character.position.clone();
   character.position.addScaledVector(movementDirection, characterSpeed * delta);
-  const distanceFromCenter = Math.hypot(
-    character.position.x,
-    character.position.z,
-  );
-  if (distanceFromCenter > 17.5) {
-    const boundaryScale = 17.5 / distanceFromCenter;
-    character.position.x *= boundaryScale;
-    character.position.z *= boundaryScale;
+  if (!isInsideActiveMap(character.position)) {
+    character.position.copy(previousPosition);
   }
   rotateTowardsMovement(delta);
 
@@ -237,6 +267,112 @@ function updateMovement(delta) {
   character.position.addScaledVector(movementDirection, step);
 
   rotateTowardsMovement(delta);
+}
+
+function prepareOfficeMap(gltf) {
+  const map = gltf.scene;
+
+  map.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = true;
+  });
+
+  map.updateMatrixWorld(true);
+  const initialBox = new THREE.Box3().setFromObject(map);
+  const initialSize = initialBox.getSize(new THREE.Vector3());
+  const horizontalSize = Math.max(initialSize.x, initialSize.z);
+  const targetHorizontalSize = 14;
+  const scale = horizontalSize > 0 ? targetHorizontalSize / horizontalSize : 1;
+
+  map.scale.setScalar(scale);
+  map.updateMatrixWorld(true);
+
+  const scaledBox = new THREE.Box3().setFromObject(map);
+  const center = scaledBox.getCenter(new THREE.Vector3());
+  map.position.x -= center.x;
+  map.position.z -= center.z;
+  map.position.y -= scaledBox.min.y;
+  map.updateMatrixWorld(true);
+
+  const finalBox = new THREE.Box3().setFromObject(map);
+  const inset = 0.35;
+  officeBounds = {
+    min: new THREE.Vector3(
+      finalBox.min.x + inset,
+      0,
+      finalBox.min.z + inset,
+    ),
+    max: new THREE.Vector3(
+      finalBox.max.x - inset,
+      0,
+      finalBox.max.z - inset,
+    ),
+  };
+
+  map.visible = false;
+  scene.add(map);
+  officeMap = map;
+  return map;
+}
+
+function loadOfficeMap() {
+  if (officeMap) return Promise.resolve(officeMap);
+  if (officeMapPromise) return officeMapPromise;
+
+  officeMapPromise = new Promise((resolve, reject) => {
+    new GLTFLoader().load(
+      '/models/isometric_office.glb',
+      (gltf) => resolve(prepareOfficeMap(gltf)),
+      undefined,
+      reject,
+    );
+  });
+
+  return officeMapPromise;
+}
+
+function resetCharacterMovement() {
+  character.position.set(0, 0, 0);
+  isMoving = false;
+  pressedKeys.clear();
+  destinationMarker.visible = false;
+}
+
+async function changeMap(nextMap) {
+  mapSelect.disabled = true;
+  resetCharacterMovement();
+
+  try {
+    if (nextMap === 'office') {
+      status.textContent = officeMap
+        ? '오피스 맵으로 전환 중'
+        : '오피스 맵을 불러오는 중 · 약 46MB';
+      await loadOfficeMap();
+
+      activeMap = 'office';
+      floor.visible = false;
+      grid.visible = false;
+      officeMap.visible = true;
+      status.textContent = '오피스 맵 · 클릭 또는 WASD로 이동';
+    } else {
+      activeMap = 'current';
+      floor.visible = true;
+      grid.visible = true;
+      if (officeMap) officeMap.visible = false;
+      status.textContent = '현재 맵 · 클릭 또는 WASD로 이동';
+    }
+  } catch (error) {
+    console.error(error);
+    mapSelect.value = 'current';
+    activeMap = 'current';
+    floor.visible = true;
+    grid.visible = true;
+    if (officeMap) officeMap.visible = false;
+    status.textContent = '오피스 맵을 불러오지 못했습니다.';
+  } finally {
+    mapSelect.disabled = false;
+  }
 }
 
 new GLTFLoader().load(
@@ -295,6 +431,10 @@ new GLTFLoader().load(
 
 animationSelect.addEventListener('change', (event) => {
   showSquid(Number(event.target.value));
+});
+
+mapSelect.addEventListener('change', (event) => {
+  changeMap(event.target.value);
 });
 
 canvas.addEventListener('pointerdown', setDestination);
