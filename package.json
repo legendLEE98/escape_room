@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "assets:index": "node scripts/generate-asset-index.mjs",
+    "assets:localize": "node scripts/localize-asset-manifest.mjs",
+    "predev": "npm run assets:index",
     "dev": "vite",
+    "prebuild": "npm run assets:index",
     "build": "vite build",
     "preview": "vite preview"
   },
