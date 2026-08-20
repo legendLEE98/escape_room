@@ -24,4 +24,9 @@ pnpm-debug.log*
 Thumbs.db
 
 # Duplicate source asset
-/quirky_series_-_free_animals_pack.glb
+isometric_office.glb
+quirky_series_-_free_animals_pack.glb
+public/models/*
+
+#bak
+*.bak
