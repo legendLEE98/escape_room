@@ -27,3 +27,6 @@ Thumbs.db
 isometric_office.glb
 quirky_series_-_free_animals_pack.glb
 public/models/*
+
+#bak
+*.bak
