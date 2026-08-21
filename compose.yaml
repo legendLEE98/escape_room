@@ -1,0 +1,11 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: escapetheroom-frontend:develop
+    container_name: escapetheroom-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:80"
+
