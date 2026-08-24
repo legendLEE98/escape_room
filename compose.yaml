@@ -1,11 +1,22 @@
 services:
-  frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: escapetheroom-frontend:develop
-    container_name: escapetheroom-frontend
+  postgres:
+    image: postgres:16-alpine
+    container_name: escapetheroom-postgres
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-escapetheroom}
+      POSTGRES_USER: ${POSTGRES_USER:-escapetheroom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     ports:
-      - "127.0.0.1:4000:80"
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
 
