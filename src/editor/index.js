@@ -4,6 +4,7 @@ import { buildSceneObjects } from './core/scene-objects.js';
 import { initMode } from './core/mode.js';
 import { initCameraView } from './core/camera-view.js';
 import { initMovement } from './core/movement.js';
+import { initSelectionOutline } from './core/selection-outline.js';
 import { initRooms } from './right-sidebar/rooms.js';
 import { initAssetCatalog } from './assets/catalog.js';
 import { initPlacement } from './assets/placement.js';
@@ -37,6 +38,7 @@ export function createScene(canvas, mapId) {
   initMode(ctx);
   initCameraView(ctx);
   initMovement(ctx);
+  initSelectionOutline(ctx);
   initRooms(ctx);
   initAssetCatalog(ctx);
   initPlacement(ctx);
@@ -59,6 +61,7 @@ export function createScene(canvas, mapId) {
     ctx.updateQuarterView(delta);
     ctx.updateEditorCameraMovement(delta);
     if (ctx.currentMode === 'editor') ctx.orbitControls.update();
+    ctx.updateSelectionOutlines();
 
     ctx.destinationMarker.material.opacity = 0.55 + Math.sin(ctx.clock.elapsedTime * 5) * 0.25;
     ctx.renderer.render(ctx.scene, ctx.camera);

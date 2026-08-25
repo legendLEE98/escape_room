@@ -45,5 +45,6 @@ export function initAssetBrowser(ctx) {
   ctx.sidebarLeftToggle.addEventListener('click', () => {
     const collapsed = ctx.sidebarLeft.dataset.collapsed === 'true';
     ctx.sidebarLeft.dataset.collapsed = String(!collapsed);
+    document.body.classList.toggle('sidebar-left-collapsed', !collapsed);
   });
 }

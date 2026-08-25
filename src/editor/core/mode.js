@@ -2,6 +2,14 @@ import { $$ } from '../dom.js';
 
 export function initMode(ctx) {
   ctx.currentMode = 'editor';
+  ctx.isShiftHeld = false;
+
+  ctx.updateGizmoVisibility = () => {
+    const isEditor = ctx.currentMode === 'editor';
+    ctx.transformControls.enabled = isEditor && !ctx.isShiftHeld;
+    ctx.transformControls.getHelper().visible =
+      isEditor && !ctx.isShiftHeld && Boolean(ctx.selectedEditorObject);
+  };
 
   ctx.setTransformMode = (mode) => {
     ctx.transformControls.setMode(mode);
@@ -24,8 +32,8 @@ export function initMode(ctx) {
     ctx.character.visible = !isEditor;
     ctx.destinationMarker.visible = !isEditor && ctx.isMoving;
     ctx.orbitControls.enabled = isEditor;
-    ctx.transformControls.enabled = isEditor;
-    ctx.transformControls.getHelper().visible = isEditor && Boolean(ctx.selectedEditorObject);
+    ctx.updateGizmoVisibility();
+    ctx.selectionOutlineGroup.visible = isEditor;
 
     ctx.floor.visible = isEditor;
     ctx.grid.visible = isEditor;
@@ -66,6 +74,11 @@ export function initMode(ctx) {
       return;
     }
 
+    if (event.key === 'Shift' && !ctx.isShiftHeld) {
+      ctx.isShiftHeld = true;
+      ctx.updateGizmoVisibility();
+    }
+
     if (ctx.currentMode === 'editor') {
       if (event.code === 'KeyQ') ctx.setTransformMode('translate');
       if (event.code === 'KeyE') ctx.setTransformMode('rotate');
@@ -83,11 +96,20 @@ export function initMode(ctx) {
   });
 
   window.addEventListener('keyup', (event) => {
+    if (event.key === 'Shift') {
+      ctx.isShiftHeld = false;
+      ctx.updateGizmoVisibility();
+    }
+
     if (!['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return;
     ctx.pressedKeys.delete(event.code);
   });
 
-  window.addEventListener('blur', () => ctx.pressedKeys.clear());
+  window.addEventListener('blur', () => {
+    ctx.pressedKeys.clear();
+    ctx.isShiftHeld = false;
+    ctx.updateGizmoVisibility();
+  });
   window.addEventListener('resize', () => {
     ctx.renderer.setSize(window.innerWidth, window.innerHeight);
     ctx.updateCameraProjection();
