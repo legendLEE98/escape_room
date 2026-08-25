@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createScene } from './scene.js';
+import { createScene } from './editor/index.js';
 
 export default function Editor({ mapId, onBack }) {
   const canvasRef = useRef(null);
