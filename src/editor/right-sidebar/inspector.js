@@ -11,6 +11,8 @@ export function initInspector(ctx) {
   ctx.suppressNextCanvasClick = false;
 
   ctx.updateInspectorFromSelection = () => {
+    ctx.updateInteractionFromSelection();
+
     const count = ctx.multiSelection.size;
     ctx.duplicateButton.disabled = count !== 1;
     ctx.deleteButton.disabled = count === 0;
@@ -42,11 +44,6 @@ export function initInspector(ctx) {
     setSharedNumberField(ctx.inspectorScaleX, selected.map((object) => object.scale.x), 2);
     setSharedNumberField(ctx.inspectorScaleY, selected.map((object) => object.scale.y), 2);
     setSharedNumberField(ctx.inspectorScaleZ, selected.map((object) => object.scale.z), 2);
-
-    ctx.inspectorBgImage.value = '';
-    const bgImageUrl = count === 1 ? ctx.selectedEditorObject.userData.bgImageUrl || '' : '';
-    ctx.inspectorBgPreview.hidden = !bgImageUrl;
-    ctx.inspectorBgPreview.src = bgImageUrl;
   };
 
   ctx.duplicateSelectedObject = async () => {
@@ -142,20 +139,6 @@ export function initInspector(ctx) {
   ctx.inspectorScaleX.addEventListener('input', (event) => applyInspectorVector('scale', 'x', event.target.value));
   ctx.inspectorScaleY.addEventListener('input', (event) => applyInspectorVector('scale', 'y', event.target.value));
   ctx.inspectorScaleZ.addEventListener('input', (event) => applyInspectorVector('scale', 'z', event.target.value));
-
-  ctx.inspectorBgImage.addEventListener('change', () => {
-    if (!ctx.selectedEditorObject) return;
-    const file = ctx.inspectorBgImage.files[0];
-    if (!file) return;
-
-    const previousUrl = ctx.selectedEditorObject.userData.bgImageUrl;
-    if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
-
-    const objectUrl = URL.createObjectURL(file);
-    ctx.selectedEditorObject.userData.bgImageUrl = objectUrl;
-    ctx.inspectorBgPreview.hidden = false;
-    ctx.inspectorBgPreview.src = objectUrl;
-  });
 
   ctx.deleteButton.addEventListener('click', () => ctx.removeSelectedObjects());
   ctx.duplicateButton.addEventListener('click', ctx.duplicateSelectedObject);

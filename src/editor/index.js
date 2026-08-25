@@ -10,7 +10,9 @@ import { initPlacement } from './assets/placement.js';
 import { initAssetPreview } from './left-sidebar/asset-preview.js';
 import { initAssetBrowser } from './left-sidebar/asset-browser.js';
 import { initHierarchy } from './right-sidebar/hierarchy.js';
+import { initInteraction } from './right-sidebar/interaction.js';
 import { initInspector } from './right-sidebar/inspector.js';
+import { initRightTabs } from './right-sidebar/tabs.js';
 import { initPersistence } from './persistence.js';
 
 export function createScene(canvas, mapId) {
@@ -41,7 +43,9 @@ export function createScene(canvas, mapId) {
   initAssetPreview(ctx);
   initAssetBrowser(ctx);
   initHierarchy(ctx);
+  initInteraction(ctx);
   initInspector(ctx);
+  initRightTabs(ctx);
   initPersistence(ctx);
 
   ctx.setMode('editor');
