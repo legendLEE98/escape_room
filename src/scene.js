@@ -5,19 +5,34 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-export function createScene(canvas) {
-const movementPanel = $('.movement-panel');
-const editorPanel = $('.editor-panel');
+export function createScene(canvas, mapId) {
+const sidebarLeft = $('.sidebar-left');
+const sidebarRight = $('.sidebar-right');
+const sidebarLeftToggle = $('#sidebar-left-toggle');
+const sidebarRightToggle = $('#sidebar-right-toggle');
 const editorHint = $('.editor-hint');
-const movementStatus = $('#movement-status');
 const editorStatus = $('#editor-status');
-const animationSelect = $('#animation');
-const mapSelect = $('#map');
 const assetSearch = $('#asset-search');
 const assetSelect = $('#asset-select');
 const assetCount = $('#asset-count');
 const addAssetButton = $('#add-asset');
-const placedSelect = $('#placed-select');
+const hierarchyList = $('#hierarchy-list');
+const inspectorEmpty = $('#inspector-empty');
+const inspectorBody = $('#inspector-body');
+const inspectorPosX = $('#inspector-pos-x');
+const inspectorPosY = $('#inspector-pos-y');
+const inspectorPosZ = $('#inspector-pos-z');
+const inspectorRotX = $('#inspector-rot-x');
+const inspectorRotY = $('#inspector-rot-y');
+const inspectorRotZ = $('#inspector-rot-z');
+const inspectorScaleX = $('#inspector-scale-x');
+const inspectorScaleY = $('#inspector-scale-y');
+const inspectorScaleZ = $('#inspector-scale-z');
+const inspectorBgImage = $('#inspector-bg-image');
+const inspectorBgPreview = $('#inspector-bg-preview');
+const duplicateButton = $('#duplicate-object');
+const deleteButton = $('#delete-object');
+const assetPreviewCanvas = $('#asset-preview');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -103,7 +118,6 @@ scene.add(character);
 
 const editorRoot = new THREE.Group();
 editorRoot.name = 'Editor objects';
-editorRoot.visible = false;
 scene.add(editorRoot);
 
 const orbitControls = new OrbitControls(camera, canvas);
@@ -126,14 +140,225 @@ transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
 transformControls.setScaleSnap(0.1);
 scene.add(transformControls.getHelper());
 
+let multiTransformSnapshot = null;
+let suppressNextCanvasClick = false;
+
 transformControls.addEventListener('dragging-changed', (event) => {
   orbitControls.enabled = !event.value && currentMode === 'editor';
-  if (!event.value) saveLayout();
+  if (event.value) {
+    if (multiSelection.size > 1 && selectedEditorObject) {
+      multiTransformSnapshot = new Map();
+      placedObjects
+        .filter((object) => multiSelection.has(object.userData.instanceId))
+        .forEach((object) => {
+          multiTransformSnapshot.set(object.userData.instanceId, {
+            position: object.position.clone(),
+            quaternion: object.quaternion.clone(),
+            scale: object.scale.clone(),
+          });
+        });
+    } else {
+      multiTransformSnapshot = null;
+    }
+  } else {
+    multiTransformSnapshot = null;
+    suppressNextCanvasClick = true;
+    saveLayout();
+  }
 });
 
+function applyMultiTransformDelta() {
+  if (!multiTransformSnapshot || !selectedEditorObject) return;
+  const primarySnapshot = multiTransformSnapshot.get(selectedEditorObject.userData.instanceId);
+  if (!primarySnapshot) return;
+
+  const deltaPosition = selectedEditorObject.position.clone().sub(primarySnapshot.position);
+  const deltaQuaternion = selectedEditorObject.quaternion
+    .clone()
+    .multiply(primarySnapshot.quaternion.clone().invert());
+  const deltaScale = selectedEditorObject.scale.clone().divide(primarySnapshot.scale);
+
+  multiTransformSnapshot.forEach((snapshot, instanceId) => {
+    if (instanceId === selectedEditorObject.userData.instanceId) return;
+    const object = placedObjects.find((candidate) => candidate.userData.instanceId === instanceId);
+    if (!object) return;
+    object.position.copy(snapshot.position.clone().add(deltaPosition));
+    object.quaternion.copy(deltaQuaternion.clone().multiply(snapshot.quaternion));
+    object.scale.copy(snapshot.scale.clone().multiply(deltaScale));
+  });
+}
+
 transformControls.addEventListener('objectChange', () => {
-  syncPlacedList();
+  applyMultiTransformDelta();
+  updateInspectorFromSelection();
 });
+
+const isometricCameraPosition = new THREE.Vector3(11, 13, 11);
+const topCameraPosition = new THREE.Vector3(0.001, 30, 0.001);
+let editorView = 'isometric';
+
+function applyEditorView(view) {
+  editorView = view;
+  $$('.tool-button[data-view]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.view === view);
+  });
+  if (view === 'top') {
+    camera.position.copy(topCameraPosition);
+    orbitControls.target.set(0, 0, 0);
+    orbitControls.enableRotate = false;
+  } else {
+    camera.position.copy(isometricCameraPosition);
+    orbitControls.target.set(0, 0.8, 0);
+    orbitControls.enableRotate = true;
+  }
+  orbitControls.update();
+  updateCameraProjection();
+}
+
+const previewRenderer = new THREE.WebGLRenderer({
+  canvas: assetPreviewCanvas,
+  antialias: true,
+  alpha: true,
+});
+previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const previewScene = new THREE.Scene();
+const previewCamera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+const previewGroup = new THREE.Group();
+previewScene.add(previewGroup);
+previewScene.add(new THREE.HemisphereLight('#c9dcff', '#172033', 2.4));
+const previewLight = new THREE.DirectionalLight('#fff4df', 3);
+previewLight.position.set(4, 6, 4);
+previewScene.add(previewLight);
+
+let previewToken = 0;
+
+function updatePreviewProjection() {
+  const width = assetPreviewCanvas.clientWidth;
+  const height = assetPreviewCanvas.clientHeight;
+  if (!width || !height) return;
+  previewRenderer.setSize(width, height, false);
+  previewCamera.aspect = width / height;
+  previewCamera.updateProjectionMatrix();
+}
+
+new ResizeObserver(updatePreviewProjection).observe(assetPreviewCanvas);
+
+function frameObjectForCamera(object, targetCamera) {
+  object.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return;
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  object.position.sub(center);
+  const maxDimension = Math.max(size.x, size.y, size.z) || 1;
+  const distance = maxDimension * 1.8;
+  targetCamera.position.set(distance, distance * 0.75, distance);
+  targetCamera.near = Math.max(distance / 100, 0.01);
+  targetCamera.far = distance * 10;
+  targetCamera.updateProjectionMatrix();
+  targetCamera.lookAt(0, 0, 0);
+}
+
+async function loadAssetPreview(asset) {
+  const token = ++previewToken;
+  previewGroup.clear();
+  if (!asset) return;
+
+  try {
+    const template = await loadAssetTemplate(asset);
+    if (token !== previewToken) return;
+    const content = template.clone(true);
+    cloneMaterials(content);
+    previewGroup.add(content);
+    frameObjectForCamera(content, previewCamera);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+let selectedAssetFile = '';
+
+function updateAssetPreviewFromSelect() {
+  const asset = assetCatalog.find((item) => item.file === selectedAssetFile);
+  loadAssetPreview(asset);
+}
+
+const thumbnailCanvasSize = 96;
+const thumbnailRenderer = new THREE.WebGLRenderer({
+  antialias: true,
+  alpha: true,
+  preserveDrawingBuffer: true,
+});
+thumbnailRenderer.setSize(thumbnailCanvasSize, thumbnailCanvasSize, false);
+thumbnailRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const thumbnailScene = new THREE.Scene();
+const thumbnailCamera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+const thumbnailGroup = new THREE.Group();
+thumbnailScene.add(thumbnailGroup);
+thumbnailScene.add(new THREE.HemisphereLight('#c9dcff', '#172033', 2.4));
+const thumbnailLight = new THREE.DirectionalLight('#fff4df', 3);
+thumbnailLight.position.set(4, 6, 4);
+thumbnailScene.add(thumbnailLight);
+
+const thumbnailCache = new Map();
+
+function drawThumbnail(dataUrl, targetCanvas) {
+  const ctx = targetCanvas.getContext('2d');
+  if (!ctx) return;
+  const image = new Image();
+  image.onload = () => {
+    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    ctx.drawImage(image, 0, 0, targetCanvas.width, targetCanvas.height);
+  };
+  image.src = dataUrl;
+}
+
+async function renderThumbnail(asset, targetCanvas) {
+  const cached = thumbnailCache.get(asset.file);
+  if (cached) {
+    drawThumbnail(cached, targetCanvas);
+    return;
+  }
+
+  try {
+    const template = await loadAssetTemplate(asset);
+    thumbnailGroup.clear();
+    const content = template.clone(true);
+    cloneMaterials(content);
+    thumbnailGroup.add(content);
+    frameObjectForCamera(content, thumbnailCamera);
+    thumbnailRenderer.render(thumbnailScene, thumbnailCamera);
+    const dataUrl = thumbnailRenderer.domElement.toDataURL('image/png');
+    thumbnailCache.set(asset.file, dataUrl);
+    drawThumbnail(dataUrl, targetCanvas);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+const thumbnailObserver = new IntersectionObserver(
+  (entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const targetCanvas = entry.target;
+      thumbnailObserver.unobserve(targetCanvas);
+      const asset = assetCatalog.find((item) => item.file === targetCanvas.dataset.file);
+      if (asset) renderThumbnail(asset, targetCanvas);
+    });
+  },
+  { root: assetSelect, threshold: 0.1 },
+);
+
+function selectAssetCard(file) {
+  selectedAssetFile = file;
+  assetSelect.querySelectorAll('.asset-card').forEach((card) => {
+    card.classList.toggle('is-selected', card.dataset.file === file);
+  });
+  updateAssetPreviewFromSelect();
+}
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -146,22 +371,27 @@ const pressedKeys = new Set();
 const assetCache = new Map();
 const placedObjects = [];
 
-let currentMode = 'movement';
+let currentMode = 'editor';
 let mixer = null;
 let squidMeshes = [];
 let loadedModel = null;
 let isMoving = false;
 let characterSpeed = 2.8;
-let activeMap = 'current';
-let officeMap = null;
-let officeMapPromise = null;
-let officeBounds = null;
+let editorLayoutBounds = null;
 let assetCatalog = [];
 let filteredAssets = [];
 let selectedEditorObject = null;
+let multiSelection = new Set();
+let rooms = [];
+let nextRoomInstanceId = 1;
+let currentRoomInstanceId = null;
 let nextInstanceId = 1;
 const modelHeadingCorrection = THREE.MathUtils.degToRad(-17);
-const layoutStorageKey = 'escape-room-editor-layout-v1';
+const legacyLayoutStorageKey = 'escape-room-editor-layout-v1';
+const layoutStorageKey =
+  mapId && mapId !== 'default'
+    ? `${legacyLayoutStorageKey}:${mapId}`
+    : legacyLayoutStorageKey;
 
 function updateCameraProjection() {
   const aspect = window.innerWidth / window.innerHeight;
@@ -222,28 +452,32 @@ function showSquid(index) {
   centerSelectedSquid(selected);
 }
 
+function computeEditorLayoutBounds() {
+  if (placedObjects.length === 0) return null;
+  const box = new THREE.Box3();
+  placedObjects.forEach((object) => box.expandByObject(object));
+  return {
+    min: new THREE.Vector3(box.min.x - 1, 0, box.min.z - 1),
+    max: new THREE.Vector3(box.max.x + 1, 0, box.max.z + 1),
+  };
+}
+
 function isInsideActiveMap(position) {
-  if (activeMap === 'office' && officeBounds) {
-    return (
-      position.x >= officeBounds.min.x &&
-      position.x <= officeBounds.max.x &&
-      position.z >= officeBounds.min.z &&
-      position.z <= officeBounds.max.z
-    );
-  }
-  return Math.hypot(position.x, position.z) <= 17.5;
+  if (!editorLayoutBounds) return false;
+  return (
+    position.x >= editorLayoutBounds.min.x &&
+    position.x <= editorLayoutBounds.max.x &&
+    position.z >= editorLayoutBounds.min.z &&
+    position.z <= editorLayoutBounds.max.z
+  );
 }
 
 function setDestination(event) {
-  if (currentMode !== 'movement' || movementPanel.contains(event.target)) return;
+  if (currentMode !== 'movement') return;
   setPointer(event);
 
   const hit = raycaster.intersectObject(navigationSurface, false)[0];
-  if (!hit) return;
-  if (!isInsideActiveMap(hit.point)) {
-    movementStatus.textContent = '이동 가능한 공간 안쪽을 선택해 주세요.';
-    return;
-  }
+  if (!hit || !isInsideActiveMap(hit.point)) return;
 
   destination.copy(hit.point);
   destination.y = 0;
@@ -251,7 +485,6 @@ function setDestination(event) {
   destinationMarker.position.z = destination.z;
   destinationMarker.visible = true;
   isMoving = true;
-  movementStatus.textContent = '목표 지점으로 이동 중입니다.';
 }
 
 function rotateTowardsMovement(delta) {
@@ -293,8 +526,37 @@ function updateKeyboardMovement(delta) {
   rotateTowardsMovement(delta);
   isMoving = false;
   destinationMarker.visible = false;
-  movementStatus.textContent = 'WASD로 이동 중입니다.';
   return true;
+}
+
+const editorCameraSpeed = 10;
+const editorCameraForward = new THREE.Vector3();
+const editorCameraRight = new THREE.Vector3();
+const editorCameraOffset = new THREE.Vector3();
+
+function updateEditorCameraMovement(delta) {
+  if (currentMode !== 'editor') return;
+  const horizontal =
+    Number(pressedKeys.has('KeyD')) - Number(pressedKeys.has('KeyA'));
+  const vertical =
+    Number(pressedKeys.has('KeyW')) - Number(pressedKeys.has('KeyS'));
+  if (horizontal === 0 && vertical === 0) return;
+
+  camera.getWorldDirection(editorCameraForward);
+  editorCameraForward.y = 0;
+  if (editorCameraForward.lengthSq() < 1e-6) editorCameraForward.set(0, 0, -1);
+  editorCameraForward.normalize();
+  editorCameraRight.crossVectors(editorCameraForward, camera.up).normalize();
+
+  editorCameraOffset
+    .set(0, 0, 0)
+    .addScaledVector(editorCameraForward, vertical)
+    .addScaledVector(editorCameraRight, horizontal)
+    .normalize()
+    .multiplyScalar(editorCameraSpeed * delta);
+
+  camera.position.add(editorCameraOffset);
+  orbitControls.target.add(editorCameraOffset);
 }
 
 function updateMovement(delta) {
@@ -307,7 +569,6 @@ function updateMovement(delta) {
     character.position.copy(destination);
     isMoving = false;
     destinationMarker.visible = false;
-    movementStatus.textContent = '도착했습니다. 바닥을 클릭해 이동하세요.';
     return;
   }
 
@@ -319,98 +580,11 @@ function updateMovement(delta) {
   rotateTowardsMovement(delta);
 }
 
-function prepareOfficeMap(gltf) {
-  const map = gltf.scene;
-  map.traverse((child) => {
-    if (!child.isMesh) return;
-    child.castShadow = true;
-    child.receiveShadow = true;
-  });
-
-  map.updateMatrixWorld(true);
-  const initialBox = new THREE.Box3().setFromObject(map);
-  const initialSize = initialBox.getSize(new THREE.Vector3());
-  const horizontalSize = Math.max(initialSize.x, initialSize.z);
-  const scale = horizontalSize > 0 ? 14 / horizontalSize : 1;
-  map.scale.setScalar(scale);
-  map.updateMatrixWorld(true);
-
-  const scaledBox = new THREE.Box3().setFromObject(map);
-  const center = scaledBox.getCenter(new THREE.Vector3());
-  map.position.x -= center.x;
-  map.position.z -= center.z;
-  map.position.y -= scaledBox.min.y;
-  map.updateMatrixWorld(true);
-
-  const finalBox = new THREE.Box3().setFromObject(map);
-  officeBounds = {
-    min: new THREE.Vector3(finalBox.min.x + 0.35, 0, finalBox.min.z + 0.35),
-    max: new THREE.Vector3(finalBox.max.x - 0.35, 0, finalBox.max.z - 0.35),
-  };
-
-  map.visible = false;
-  scene.add(map);
-  officeMap = map;
-  return map;
-}
-
-function loadOfficeMap() {
-  if (officeMap) return Promise.resolve(officeMap);
-  if (officeMapPromise) return officeMapPromise;
-
-  officeMapPromise = new Promise((resolve, reject) => {
-    loader.load(
-      '/models/isometric_office.glb',
-      (gltf) => resolve(prepareOfficeMap(gltf)),
-      undefined,
-      reject,
-    );
-  });
-  return officeMapPromise;
-}
-
 function resetCharacterMovement() {
   character.position.set(0, 0, 0);
   isMoving = false;
   pressedKeys.clear();
   destinationMarker.visible = false;
-}
-
-async function changeMap(nextMap) {
-  mapSelect.disabled = true;
-  resetCharacterMovement();
-
-  try {
-    if (nextMap === 'office') {
-      movementStatus.textContent = officeMap
-        ? '사무실 맵으로 전환 중입니다.'
-        : '통합 사무실 맵을 불러오는 중입니다.';
-      await loadOfficeMap();
-      activeMap = 'office';
-      floor.visible = false;
-      grid.visible = false;
-      officeMap.visible = currentMode === 'movement';
-      movementStatus.textContent =
-        '사무실 맵입니다. 바닥 클릭 또는 WASD로 이동하세요.';
-    } else {
-      activeMap = 'current';
-      floor.visible = true;
-      grid.visible = true;
-      if (officeMap) officeMap.visible = false;
-      movementStatus.textContent =
-        '기본 공간입니다. 바닥 클릭 또는 WASD로 이동하세요.';
-    }
-  } catch (error) {
-    console.error(error);
-    mapSelect.value = 'current';
-    activeMap = 'current';
-    floor.visible = true;
-    grid.visible = true;
-    if (officeMap) officeMap.visible = false;
-    movementStatus.textContent = '사무실 맵을 불러오지 못했습니다.';
-  } finally {
-    mapSelect.disabled = false;
-  }
 }
 
 function cloneMaterials(root) {
@@ -446,11 +620,64 @@ function normalizeAsset(root) {
   root.updateMatrixWorld(true);
 }
 
+function ensureDefaultRoom() {
+  if (rooms.length > 0) return;
+  const room = { instanceId: nextRoomInstanceId++, name: '방1', isStartRoom: true };
+  rooms.push(room);
+  currentRoomInstanceId = room.instanceId;
+}
+
+function addRoom() {
+  const room = {
+    instanceId: nextRoomInstanceId++,
+    name: `방${rooms.length + 1}`,
+    isStartRoom: rooms.length === 0,
+  };
+  rooms.push(room);
+  currentRoomInstanceId = room.instanceId;
+  syncHierarchy();
+  saveLayout();
+}
+
+function deleteRoom(room) {
+  if (rooms.length <= 1) {
+    editorStatus.textContent = '최소 하나의 방은 있어야 합니다.';
+    return;
+  }
+
+  const targets = placedObjects.filter((object) => object.userData.roomInstanceId === room.instanceId);
+  const confirmed = window.confirm(
+    `"${room.name}" 방을 삭제합니다. 방 안의 오브젝트 ${targets.length}개가 함께 삭제되며 되돌릴 수 없습니다. 계속할까요?`,
+  );
+  if (!confirmed) return;
+
+  targets.forEach((object) => {
+    const index = placedObjects.indexOf(object);
+    if (index >= 0) placedObjects.splice(index, 1);
+    object.removeFromParent();
+    multiSelection.delete(object.userData.instanceId);
+  });
+  if (selectedEditorObject && !placedObjects.includes(selectedEditorObject)) {
+    selectedEditorObject = null;
+    transformControls.detach();
+  }
+
+  rooms = rooms.filter((candidate) => candidate.instanceId !== room.instanceId);
+  if (rooms.length && !rooms.some((candidate) => candidate.isStartRoom)) rooms[0].isStartRoom = true;
+  if (currentRoomInstanceId === room.instanceId) currentRoomInstanceId = rooms[0]?.instanceId ?? null;
+
+  updateInspectorFromSelection();
+  syncHierarchy();
+  saveLayout();
+  editorStatus.textContent = `"${room.name}" 방과 오브젝트 ${targets.length}개를 삭제했습니다.`;
+}
+
 function createPlacedContainer(asset, content) {
   const container = new THREE.Group();
   container.name = `${asset.label} ${nextInstanceId}`;
   container.userData.editorAsset = true;
   container.userData.assetFile = asset.file;
+  container.userData.assetUrl = asset.url;
   container.userData.assetLabel = asset.label;
   container.userData.instanceId = nextInstanceId++;
   container.add(content);
@@ -473,12 +700,14 @@ async function addAsset(asset, transform = null, shouldSave = true) {
       container.position.fromArray(transform.position);
       container.rotation.fromArray(transform.rotation);
       container.scale.fromArray(transform.scale);
+      if (transform.name) container.name = transform.name;
     }
+    container.userData.roomInstanceId = transform?.roomInstanceId ?? currentRoomInstanceId;
 
     editorRoot.add(container);
     placedObjects.push(container);
     selectEditorObject(container);
-    syncPlacedList();
+    syncHierarchy();
     if (shouldSave) saveLayout();
     editorStatus.textContent = `${asset.label}을 배치했습니다.`;
     return container;
@@ -491,15 +720,98 @@ async function addAsset(asset, transform = null, shouldSave = true) {
   }
 }
 
-function selectEditorObject(object) {
-  selectedEditorObject = object || null;
+function setSharedNumberField(input, values, precision) {
+  const rounded = values.map((value) => Number(value.toFixed(precision)));
+  const allEqual = rounded.every((value) => value === rounded[0]);
+  input.value = allEqual ? rounded[0].toFixed(precision) : '';
+}
+
+function updateInspectorFromSelection() {
+  const count = multiSelection.size;
+  duplicateButton.disabled = count !== 1;
+  deleteButton.disabled = count === 0;
+
+  inspectorBody.hidden = count === 0;
+  inspectorEmpty.hidden = count > 0;
+  if (count === 0) return;
+
+  const selected = placedObjects.filter((object) => multiSelection.has(object.userData.instanceId));
+
+  setSharedNumberField(inspectorPosX, selected.map((object) => object.position.x), 2);
+  setSharedNumberField(inspectorPosY, selected.map((object) => object.position.y), 2);
+  setSharedNumberField(inspectorPosZ, selected.map((object) => object.position.z), 2);
+  setSharedNumberField(
+    inspectorRotX,
+    selected.map((object) => THREE.MathUtils.radToDeg(object.rotation.x)),
+    1,
+  );
+  setSharedNumberField(
+    inspectorRotY,
+    selected.map((object) => THREE.MathUtils.radToDeg(object.rotation.y)),
+    1,
+  );
+  setSharedNumberField(
+    inspectorRotZ,
+    selected.map((object) => THREE.MathUtils.radToDeg(object.rotation.z)),
+    1,
+  );
+  setSharedNumberField(inspectorScaleX, selected.map((object) => object.scale.x), 2);
+  setSharedNumberField(inspectorScaleY, selected.map((object) => object.scale.y), 2);
+  setSharedNumberField(inspectorScaleZ, selected.map((object) => object.scale.z), 2);
+
+  inspectorBgImage.value = '';
+  const bgImageUrl = count === 1 ? selectedEditorObject.userData.bgImageUrl || '' : '';
+  inspectorBgPreview.hidden = !bgImageUrl;
+  inspectorBgPreview.src = bgImageUrl;
+}
+
+function selectEditorObject(object, options = {}) {
+  const { additive = false, range = false } = options;
+
+  if (!object) {
+    multiSelection.clear();
+    selectedEditorObject = null;
+  } else if (range && selectedEditorObject) {
+    const startIndex = placedObjects.indexOf(selectedEditorObject);
+    const endIndex = placedObjects.indexOf(object);
+    if (startIndex >= 0 && endIndex >= 0) {
+      const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+      for (let i = from; i <= to; i += 1) multiSelection.add(placedObjects[i].userData.instanceId);
+    }
+    selectedEditorObject = object;
+  } else if (additive) {
+    if (multiSelection.has(object.userData.instanceId)) {
+      multiSelection.delete(object.userData.instanceId);
+      selectedEditorObject =
+        placedObjects.find((candidate) => multiSelection.has(candidate.userData.instanceId)) ||
+        null;
+    } else {
+      multiSelection.add(object.userData.instanceId);
+      selectedEditorObject = object;
+    }
+  } else {
+    multiSelection.clear();
+    multiSelection.add(object.userData.instanceId);
+    selectedEditorObject = object;
+  }
+
   if (selectedEditorObject) {
     transformControls.attach(selectedEditorObject);
-    placedSelect.value = String(selectedEditorObject.userData.instanceId);
+    currentRoomInstanceId = selectedEditorObject.userData.roomInstanceId;
   } else {
     transformControls.detach();
-    placedSelect.value = '';
   }
+  updateInspectorFromSelection();
+  syncHierarchyHighlight();
+}
+
+function selectRoom(room) {
+  multiSelection.clear();
+  selectedEditorObject = null;
+  transformControls.detach();
+  currentRoomInstanceId = room.instanceId;
+  updateInspectorFromSelection();
+  syncHierarchyHighlight();
 }
 
 function findPlacedAncestor(object) {
@@ -512,43 +824,157 @@ function findPlacedAncestor(object) {
 }
 
 function selectFromCanvas(event) {
+  if (suppressNextCanvasClick) {
+    suppressNextCanvasClick = false;
+    return;
+  }
   if (
     currentMode !== 'editor' ||
     transformControls.dragging ||
-    editorPanel.contains(event.target)
+    sidebarLeft.contains(event.target) ||
+    sidebarRight.contains(event.target)
   ) {
     return;
   }
   setPointer(event);
   const hits = raycaster.intersectObjects(placedObjects, true);
-  selectEditorObject(hits.length ? findPlacedAncestor(hits[0].object) : null);
+  const object = hits.length ? findPlacedAncestor(hits[0].object) : null;
+  if (object && event.shiftKey) selectEditorObject(object, { range: true });
+  else if (object && (event.ctrlKey || event.metaKey)) selectEditorObject(object, { additive: true });
+  else selectEditorObject(object);
 }
 
-function syncPlacedList() {
-  const previous = selectedEditorObject?.userData.instanceId;
-  placedSelect.innerHTML = '';
-  placedObjects.forEach((object) => {
-    const option = document.createElement('option');
-    option.value = String(object.userData.instanceId);
-    option.textContent = object.name;
-    placedSelect.append(option);
+function syncHierarchyHighlight() {
+  hierarchyList.querySelectorAll('.hierarchy-object').forEach((item) => {
+    item.classList.toggle('is-selected', multiSelection.has(Number(item.dataset.instanceId)));
   });
-  if (previous) placedSelect.value = String(previous);
+  hierarchyList.querySelectorAll('.hierarchy-room-header').forEach((header) => {
+    header.classList.toggle(
+      'is-current-room',
+      Number(header.dataset.roomInstanceId) === currentRoomInstanceId,
+    );
+  });
 }
 
-function removeSelectedObject(shouldSave = true) {
-  if (!selectedEditorObject) return;
-  const index = placedObjects.indexOf(selectedEditorObject);
-  if (index >= 0) placedObjects.splice(index, 1);
-  selectedEditorObject.removeFromParent();
+function syncHierarchy() {
+  hierarchyList.innerHTML = '';
+
+  rooms.forEach((room) => {
+    const header = document.createElement('li');
+    header.className = 'hierarchy-room-header';
+    header.dataset.roomInstanceId = String(room.instanceId);
+    header.classList.toggle('is-current-room', room.instanceId === currentRoomInstanceId);
+
+    const headerLabel = document.createElement('span');
+    headerLabel.className = 'hierarchy-room-header-label';
+    headerLabel.textContent = room.name;
+    header.append(headerLabel);
+
+    const deleteRoomButton = document.createElement('button');
+    deleteRoomButton.type = 'button';
+    deleteRoomButton.className = 'hierarchy-room-delete';
+    deleteRoomButton.textContent = '×';
+    deleteRoomButton.setAttribute('aria-label', `${room.name} 삭제`);
+    deleteRoomButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      deleteRoom(room);
+    });
+    header.append(deleteRoomButton);
+
+    header.addEventListener('click', () => selectRoom(room));
+    hierarchyList.append(header);
+
+    placedObjects
+      .filter((object) => object.userData.roomInstanceId === room.instanceId)
+      .forEach((object) => {
+        const item = document.createElement('li');
+        item.className = 'hierarchy-object';
+        item.dataset.instanceId = String(object.userData.instanceId);
+        item.textContent = object.name;
+        item.classList.toggle('is-selected', multiSelection.has(object.userData.instanceId));
+        item.addEventListener('click', (event) => {
+          if (event.shiftKey) {
+            selectEditorObject(object, { range: true });
+          } else if (event.ctrlKey || event.metaKey) {
+            selectEditorObject(object, { additive: true });
+          } else if (
+            multiSelection.size === 1 &&
+            object.userData.instanceId === selectedEditorObject?.userData.instanceId
+          ) {
+            startRenameHierarchyItem(item, object);
+          } else {
+            selectEditorObject(object);
+          }
+        });
+        hierarchyList.append(item);
+      });
+  });
+
+  const addRoomItem = document.createElement('li');
+  addRoomItem.className = 'hierarchy-add-room';
+  const addRoomButton = document.createElement('button');
+  addRoomButton.type = 'button';
+  addRoomButton.className = 'hierarchy-add-room-button';
+  addRoomButton.textContent = '+';
+  addRoomButton.setAttribute('aria-label', '방 추가');
+  addRoomButton.addEventListener('click', addRoom);
+  addRoomItem.append(addRoomButton);
+  hierarchyList.append(addRoomItem);
+}
+
+function startRenameHierarchyItem(item, object) {
+  if (item.querySelector('input')) return;
+  item.textContent = '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = object.name;
+  item.append(input);
+  input.focus();
+  input.select();
+
+  const commit = () => {
+    const nextName = input.value.trim();
+    if (nextName) object.name = nextName;
+    syncHierarchy();
+    saveLayout();
+  };
+
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.code === 'Enter') input.blur();
+    if (event.code === 'Escape') {
+      input.removeEventListener('blur', commit);
+      syncHierarchy();
+    }
+  });
+  input.addEventListener('blur', commit, { once: true });
+}
+
+function renameSelectedObject() {
+  if (!selectedEditorObject || multiSelection.size !== 1) return;
+  const item = hierarchyList.querySelector(
+    `li[data-instance-id="${selectedEditorObject.userData.instanceId}"]`,
+  );
+  if (item) startRenameHierarchyItem(item, selectedEditorObject);
+}
+
+function removeSelectedObjects(shouldSave = true) {
+  if (multiSelection.size === 0) return;
+  const targets = placedObjects.filter((object) => multiSelection.has(object.userData.instanceId));
+  targets.forEach((object) => {
+    const index = placedObjects.indexOf(object);
+    if (index >= 0) placedObjects.splice(index, 1);
+    object.removeFromParent();
+  });
   selectEditorObject(null);
-  syncPlacedList();
+  syncHierarchy();
   if (shouldSave) saveLayout();
-  editorStatus.textContent = '선택한 객체를 삭제했습니다.';
+  editorStatus.textContent = `선택한 객체 ${targets.length}개를 삭제했습니다.`;
 }
 
 async function duplicateSelectedObject() {
-  if (!selectedEditorObject) return;
+  if (!selectedEditorObject || multiSelection.size !== 1) return;
   const asset = assetCatalog.find(
     (candidate) => candidate.file === selectedEditorObject.userData.assetFile,
   );
@@ -560,21 +986,83 @@ async function duplicateSelectedObject() {
       .toArray(),
     rotation: selectedEditorObject.rotation.toArray(),
     scale: selectedEditorObject.scale.toArray(),
+    roomInstanceId: selectedEditorObject.userData.roomInstanceId,
   };
   await addAsset(asset, transform);
 }
 
 function serializeLayout() {
-  return placedObjects.map((object) => ({
-    file: object.userData.assetFile,
-    position: object.position.toArray(),
-    rotation: object.rotation.toArray(),
-    scale: object.scale.toArray(),
-  }));
+  return {
+    rooms: rooms.map((room) => ({
+      id: `room-${room.instanceId}`,
+      roomName: room.name,
+      isStartRoom: room.isStartRoom,
+      initialSpawnPos: [0, 0, 0],
+      connectedRooms: [],
+      objects: placedObjects
+        .filter((object) => object.userData.roomInstanceId === room.instanceId)
+        .map((object) => ({
+          id: `obj-${object.userData.instanceId}`,
+          name: object.name,
+          glbUrl: object.userData.assetUrl,
+          transform: {
+            position: object.position.toArray(),
+            rotation: object.rotation.toArray(),
+            scale: object.scale.toArray(),
+          },
+          castShadow: true,
+          receiveShadow: true,
+          blocksMovement: true,
+          interaction: null,
+        })),
+    })),
+  };
 }
 
 function saveLayout() {
   localStorage.setItem(layoutStorageKey, JSON.stringify(serializeLayout()));
+}
+
+function isLegacyFlatLayout(saved) {
+  return Array.isArray(saved) && saved.length > 0 && typeof saved[0].file === 'string';
+}
+
+function collectRestoreItems(saved) {
+  if (isLegacyFlatLayout(saved)) {
+    ensureDefaultRoom();
+    return saved.map((item) => ({
+      asset: assetCatalog.find((candidate) => candidate.file === item.file),
+      name: item.name,
+      position: item.position,
+      rotation: item.rotation,
+      scale: item.scale,
+      roomInstanceId: currentRoomInstanceId,
+    }));
+  }
+
+  const savedRooms = Array.isArray(saved) ? saved : saved.rooms || [];
+  const items = [];
+  rooms = savedRooms.map((savedRoom, index) => {
+    const room = {
+      instanceId: nextRoomInstanceId++,
+      name: savedRoom.roomName || `방${index + 1}`,
+      isStartRoom: Boolean(savedRoom.isStartRoom),
+    };
+    (savedRoom.objects || []).forEach((item) => {
+      items.push({
+        asset: assetCatalog.find((candidate) => candidate.url === item.glbUrl),
+        name: item.name,
+        position: item.transform.position,
+        rotation: item.transform.rotation,
+        scale: item.transform.scale,
+        roomInstanceId: room.instanceId,
+      });
+    });
+    return room;
+  });
+  ensureDefaultRoom();
+  currentRoomInstanceId = rooms[0].instanceId;
+  return items;
 }
 
 async function restoreLayout() {
@@ -584,24 +1072,21 @@ async function restoreLayout() {
   } catch {
     saved = [];
   }
-  if (!Array.isArray(saved) || saved.length === 0) return;
+  const hasData = Array.isArray(saved) ? saved.length > 0 : Boolean(saved?.rooms?.length);
+  if (!hasData) {
+    ensureDefaultRoom();
+    syncHierarchy();
+    return;
+  }
 
-  editorStatus.textContent = `저장된 객체 ${saved.length}개를 복원하는 중...`;
-  for (const item of saved) {
-    const asset = assetCatalog.find((candidate) => candidate.file === item.file);
-    if (asset) await addAsset(asset, item, false);
+  const items = collectRestoreItems(saved);
+  editorStatus.textContent = `저장된 객체 ${items.length}개를 복원하는 중...`;
+  for (const item of items) {
+    if (item.asset) await addAsset(item.asset, item, false);
   }
   selectEditorObject(null);
+  syncHierarchy();
   editorStatus.textContent = `저장된 객체 ${placedObjects.length}개를 복원했습니다.`;
-}
-
-function clearLayout() {
-  transformControls.detach();
-  placedObjects.splice(0).forEach((object) => object.removeFromParent());
-  selectedEditorObject = null;
-  syncPlacedList();
-  saveLayout();
-  editorStatus.textContent = '배치된 객체를 모두 비웠습니다.';
 }
 
 function labelFromFilename(file) {
@@ -618,13 +1103,34 @@ function renderAssetOptions() {
   );
   assetSelect.innerHTML = '';
   filteredAssets.forEach((asset) => {
-    const option = document.createElement('option');
-    option.value = asset.file;
-    option.textContent = asset.label;
-    assetSelect.append(option);
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'asset-card';
+    card.dataset.file = asset.file;
+    card.setAttribute('role', 'option');
+
+    const thumb = document.createElement('span');
+    thumb.className = 'asset-card-thumb';
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = thumbnailCanvasSize;
+    thumbCanvas.height = thumbnailCanvasSize;
+    thumbCanvas.dataset.file = asset.file;
+    thumb.append(thumbCanvas);
+
+    const label = document.createElement('span');
+    label.className = 'asset-card-label';
+    label.textContent = asset.label;
+
+    card.append(thumb, label);
+    card.addEventListener('click', () => selectAssetCard(asset.file));
+    card.addEventListener('dblclick', () => addAsset(asset));
+    assetSelect.append(card);
+
+    thumbnailObserver.observe(thumbCanvas);
   });
-  if (filteredAssets.length) assetSelect.selectedIndex = 0;
+
   addAssetButton.disabled = filteredAssets.length === 0;
+  selectAssetCard(filteredAssets.length ? filteredAssets[0].file : '');
 }
 
 async function fetchAssetCatalog() {
@@ -671,7 +1177,7 @@ async function fetchAssetCatalog() {
 
 function setTransformMode(mode) {
   transformControls.setMode(mode);
-  $$('.tool-button').forEach((button) => {
+  $$('.tool-button[data-transform]').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.transform === mode);
   });
 }
@@ -684,26 +1190,31 @@ function setMode(mode) {
   $$('.mode-button').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.mode === mode);
   });
-  movementPanel.hidden = isEditor;
-  editorPanel.hidden = !isEditor;
+  sidebarLeft.hidden = !isEditor;
+  sidebarRight.hidden = !isEditor;
   editorHint.hidden = !isEditor;
   character.visible = !isEditor;
   destinationMarker.visible = !isEditor && isMoving;
-  editorRoot.visible = isEditor;
   orbitControls.enabled = isEditor;
   transformControls.enabled = isEditor;
   transformControls.getHelper().visible = isEditor && Boolean(selectedEditorObject);
 
-  if (officeMap) officeMap.visible = !isEditor && activeMap === 'office';
-  floor.visible = isEditor || activeMap === 'current';
-  grid.visible = isEditor || activeMap === 'current';
+  floor.visible = isEditor;
+  grid.visible = isEditor;
 
   pressedKeys.clear();
   if (isEditor) {
-    camera.position.set(11, 13, 11);
-    orbitControls.target.set(0, 0.8, 0);
-    orbitControls.update();
+    applyEditorView(editorView);
   } else {
+    resetCharacterMovement();
+    editorLayoutBounds = computeEditorLayoutBounds();
+    if (editorLayoutBounds) {
+      character.position.set(
+        (editorLayoutBounds.min.x + editorLayoutBounds.max.x) / 2,
+        0,
+        (editorLayoutBounds.min.z + editorLayoutBounds.max.z) / 2,
+      );
+    }
     camera.position.copy(character.position).add(cameraOffset);
     camera.lookAt(character.position.x, character.position.y + 0.65, character.position.z);
   }
@@ -734,27 +1245,11 @@ loader.load(
       gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
     }
 
-    animationSelect.innerHTML = '';
-    if (squidMeshes.length) {
-      squidMeshes.forEach((mesh, index) => {
-        const option = document.createElement('option');
-        option.value = String(index);
-        option.textContent = `오징어 동작 샘플 ${index + 1}`;
-        animationSelect.append(option);
-      });
-      animationSelect.disabled = false;
-      showSquid(0);
-      movementStatus.textContent =
-        '준비 완료. 바닥 클릭 또는 WASD로 이동하세요.';
-    } else {
-      animationSelect.innerHTML = '<option>오징어 메시 없음</option>';
-      movementStatus.textContent = '모델에서 오징어 메시를 찾지 못했습니다.';
-    }
+    if (squidMeshes.length) showSquid(0);
   },
   undefined,
   (error) => {
     console.error(error);
-    movementStatus.textContent = '캐릭터 모델을 불러오지 못했습니다.';
   },
 );
 
@@ -762,63 +1257,99 @@ $$('.mode-button').forEach((button) => {
   button.addEventListener('click', () => setMode(button.dataset.mode));
 });
 
-$$('.tool-button').forEach((button) => {
+$$('.tool-button[data-transform]').forEach((button) => {
   button.addEventListener('click', () =>
     setTransformMode(button.dataset.transform),
   );
 });
 
-animationSelect.addEventListener('change', (event) => {
-  showSquid(Number(event.target.value));
-});
-
-mapSelect.addEventListener('change', (event) => {
-  changeMap(event.target.value);
+$$('.tool-button[data-view]').forEach((button) => {
+  button.addEventListener('click', () => applyEditorView(button.dataset.view));
 });
 
 assetSearch.addEventListener('input', renderAssetOptions);
-assetSelect.addEventListener('dblclick', () => {
-  const asset = assetCatalog.find((item) => item.file === assetSelect.value);
-  addAsset(asset);
-});
 addAssetButton.addEventListener('click', () => {
-  const asset = assetCatalog.find((item) => item.file === assetSelect.value);
+  const asset = assetCatalog.find((item) => item.file === selectedAssetFile);
   addAsset(asset);
 });
 
-placedSelect.addEventListener('change', () => {
-  selectEditorObject(
-    placedObjects.find(
-      (object) =>
-        object.userData.instanceId === Number(placedSelect.value),
-    ) || null,
-  );
+sidebarLeftToggle.addEventListener('click', () => {
+  const collapsed = sidebarLeft.dataset.collapsed === 'true';
+  sidebarLeft.dataset.collapsed = String(!collapsed);
 });
 
-$('#delete-object').addEventListener('click', () => removeSelectedObject());
-$('#duplicate-object').addEventListener('click', duplicateSelectedObject);
-$('#save-layout').addEventListener('click', () => {
-  saveLayout();
-  editorStatus.textContent = '현재 배치를 저장했습니다.';
+sidebarRightToggle.addEventListener('click', () => {
+  const collapsed = sidebarRight.dataset.collapsed === 'true';
+  sidebarRight.dataset.collapsed = String(!collapsed);
+  document.body.classList.toggle('sidebar-right-collapsed', !collapsed);
 });
-$('#clear-layout').addEventListener('click', clearLayout);
+
+function applyInspectorVector(component, axis, value) {
+  if (multiSelection.size === 0) return;
+  const trimmed = value.trim();
+  if (trimmed === '') return;
+  const number = Number(trimmed);
+  if (Number.isNaN(number)) return;
+
+  placedObjects
+    .filter((object) => multiSelection.has(object.userData.instanceId))
+    .forEach((object) => {
+      if (component === 'rotation') {
+        object.rotation[axis] = THREE.MathUtils.degToRad(number);
+      } else {
+        object[component][axis] = number;
+      }
+    });
+  saveLayout();
+}
+
+inspectorPosX.addEventListener('input', (event) => applyInspectorVector('position', 'x', event.target.value));
+inspectorPosY.addEventListener('input', (event) => applyInspectorVector('position', 'y', event.target.value));
+inspectorPosZ.addEventListener('input', (event) => applyInspectorVector('position', 'z', event.target.value));
+inspectorRotX.addEventListener('input', (event) => applyInspectorVector('rotation', 'x', event.target.value));
+inspectorRotY.addEventListener('input', (event) => applyInspectorVector('rotation', 'y', event.target.value));
+inspectorRotZ.addEventListener('input', (event) => applyInspectorVector('rotation', 'z', event.target.value));
+inspectorScaleX.addEventListener('input', (event) => applyInspectorVector('scale', 'x', event.target.value));
+inspectorScaleY.addEventListener('input', (event) => applyInspectorVector('scale', 'y', event.target.value));
+inspectorScaleZ.addEventListener('input', (event) => applyInspectorVector('scale', 'z', event.target.value));
+
+inspectorBgImage.addEventListener('change', () => {
+  if (!selectedEditorObject) return;
+  const file = inspectorBgImage.files[0];
+  if (!file) return;
+
+  const previousUrl = selectedEditorObject.userData.bgImageUrl;
+  if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+
+  const objectUrl = URL.createObjectURL(file);
+  selectedEditorObject.userData.bgImageUrl = objectUrl;
+  inspectorBgPreview.hidden = false;
+  inspectorBgPreview.src = objectUrl;
+});
+
+deleteButton.addEventListener('click', () => removeSelectedObjects());
+duplicateButton.addEventListener('click', duplicateSelectedObject);
 
 canvas.addEventListener('pointerdown', setDestination);
 canvas.addEventListener('click', selectFromCanvas);
 
 window.addEventListener('keydown', (event) => {
+  if (
+    event.target instanceof HTMLInputElement ||
+    event.target instanceof HTMLSelectElement
+  ) {
+    return;
+  }
+
   if (currentMode === 'editor') {
-    if (
-      event.target instanceof HTMLInputElement ||
-      event.target instanceof HTMLSelectElement
-    ) {
-      return;
-    }
-    if (event.code === 'KeyW') setTransformMode('translate');
+    if (event.code === 'KeyQ') setTransformMode('translate');
     if (event.code === 'KeyE') setTransformMode('rotate');
     if (event.code === 'KeyR') setTransformMode('scale');
-    if (event.code === 'Delete') removeSelectedObject();
-    return;
+    if (event.code === 'Delete') removeSelectedObjects();
+    if (event.code === 'F2') {
+      event.preventDefault();
+      renameSelectedObject();
+    }
   }
 
   if (!['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return;
@@ -827,13 +1358,8 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('keyup', (event) => {
-  if (currentMode !== 'movement') return;
   if (!['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return;
   pressedKeys.delete(event.code);
-  if (pressedKeys.size === 0) {
-    movementStatus.textContent =
-      '준비 완료. 바닥 클릭 또는 WASD로 이동하세요.';
-  }
 });
 
 window.addEventListener('blur', () => pressedKeys.clear());
@@ -842,9 +1368,7 @@ window.addEventListener('resize', () => {
   updateCameraProjection();
 });
 
-updateCameraProjection();
-camera.position.copy(cameraOffset);
-camera.lookAt(0, 0.65, 0);
+setMode('editor');
 fetchAssetCatalog();
 
 function animate() {
@@ -853,11 +1377,17 @@ function animate() {
   mixer?.update(delta);
   updateMovement(delta);
   updateQuarterView(delta);
+  updateEditorCameraMovement(delta);
   if (currentMode === 'editor') orbitControls.update();
 
   destinationMarker.material.opacity =
     0.55 + Math.sin(clock.elapsedTime * 5) * 0.25;
   renderer.render(scene, camera);
+
+  if (currentMode === 'editor' && previewGroup.children.length) {
+    previewGroup.rotation.y += delta * 0.6;
+    previewRenderer.render(previewScene, previewCamera);
+  }
 }
 
 animate();
