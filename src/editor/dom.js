@@ -1,0 +1,34 @@
+export const $ = (selector) => document.querySelector(selector);
+export const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+export function queryEditorDom() {
+  return {
+    sidebarLeft: $('.sidebar-left'),
+    sidebarRight: $('.sidebar-right'),
+    sidebarLeftToggle: $('#sidebar-left-toggle'),
+    sidebarRightToggle: $('#sidebar-right-toggle'),
+    editorHint: $('.editor-hint'),
+    editorStatus: $('#editor-status'),
+    assetSearch: $('#asset-search'),
+    assetSelect: $('#asset-select'),
+    assetCount: $('#asset-count'),
+    addAssetButton: $('#add-asset'),
+    hierarchyList: $('#hierarchy-list'),
+    inspectorEmpty: $('#inspector-empty'),
+    inspectorBody: $('#inspector-body'),
+    inspectorPosX: $('#inspector-pos-x'),
+    inspectorPosY: $('#inspector-pos-y'),
+    inspectorPosZ: $('#inspector-pos-z'),
+    inspectorRotX: $('#inspector-rot-x'),
+    inspectorRotY: $('#inspector-rot-y'),
+    inspectorRotZ: $('#inspector-rot-z'),
+    inspectorScaleX: $('#inspector-scale-x'),
+    inspectorScaleY: $('#inspector-scale-y'),
+    inspectorScaleZ: $('#inspector-scale-z'),
+    inspectorBgImage: $('#inspector-bg-image'),
+    inspectorBgPreview: $('#inspector-bg-preview'),
+    duplicateButton: $('#duplicate-object'),
+    deleteButton: $('#delete-object'),
+    assetPreviewCanvas: $('#asset-preview'),
+  };
+}

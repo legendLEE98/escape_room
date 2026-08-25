@@ -1,0 +1,71 @@
+import * as THREE from 'three';
+import { queryEditorDom } from './dom.js';
+import { buildSceneObjects } from './core/scene-objects.js';
+import { initMode } from './core/mode.js';
+import { initCameraView } from './core/camera-view.js';
+import { initMovement } from './core/movement.js';
+import { initRooms } from './right-sidebar/rooms.js';
+import { initAssetCatalog } from './assets/catalog.js';
+import { initPlacement } from './assets/placement.js';
+import { initAssetPreview } from './left-sidebar/asset-preview.js';
+import { initAssetBrowser } from './left-sidebar/asset-browser.js';
+import { initHierarchy } from './right-sidebar/hierarchy.js';
+import { initInspector } from './right-sidebar/inspector.js';
+import { initPersistence } from './persistence.js';
+
+export function createScene(canvas, mapId) {
+  const ctx = {
+    canvas,
+    mapId,
+    ...queryEditorDom(),
+    ...buildSceneObjects(canvas),
+  };
+
+  ctx.raycaster = new THREE.Raycaster();
+  ctx.pointer = new THREE.Vector2();
+  ctx.pressedKeys = new Set();
+
+  ctx.setPointer = (event) => {
+    const bounds = ctx.canvas.getBoundingClientRect();
+    ctx.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    ctx.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+    ctx.raycaster.setFromCamera(ctx.pointer, ctx.camera);
+  };
+
+  initMode(ctx);
+  initCameraView(ctx);
+  initMovement(ctx);
+  initRooms(ctx);
+  initAssetCatalog(ctx);
+  initPlacement(ctx);
+  initAssetPreview(ctx);
+  initAssetBrowser(ctx);
+  initHierarchy(ctx);
+  initInspector(ctx);
+  initPersistence(ctx);
+
+  ctx.setMode('editor');
+  ctx.fetchAssetCatalog();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const delta = Math.min(ctx.clock.getDelta(), 0.05);
+    ctx.mixer?.update(delta);
+    ctx.updateMovement(delta);
+    ctx.updateQuarterView(delta);
+    ctx.updateEditorCameraMovement(delta);
+    if (ctx.currentMode === 'editor') ctx.orbitControls.update();
+
+    ctx.destinationMarker.material.opacity = 0.55 + Math.sin(ctx.clock.elapsedTime * 5) * 0.25;
+    ctx.renderer.render(ctx.scene, ctx.camera);
+
+    if (ctx.currentMode === 'editor' && ctx.previewGroup.children.length) {
+      ctx.previewGroup.rotation.y += delta * 0.6;
+      ctx.previewRenderer.render(ctx.previewScene, ctx.previewCamera);
+    }
+  }
+
+  animate();
+
+  return undefined;
+}
