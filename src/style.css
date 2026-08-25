@@ -68,6 +68,10 @@ body.sidebar-left-collapsed .mode-bar {
   left: 52px;
 }
 
+body:not([data-mode="editor"]) .mode-bar {
+  left: 18px;
+}
+
 body.sidebar-right-collapsed .mode-bar {
   right: 52px;
 }
@@ -142,6 +146,18 @@ label {
   color: #cbd4e1;
   font-size: 12px;
   font-weight: 700;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
 }
 
 select,

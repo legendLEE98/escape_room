@@ -166,6 +166,22 @@ export default function Editor({ mapId, onBack }) {
                   <input id="inspector-scale-z" type="number" step="0.1" aria-label="크기 Z" />
                 </div>
               </div>
+
+              <label className="checkbox-row" htmlFor="inspector-blocks-movement">
+                <input id="inspector-blocks-movement" type="checkbox" />
+                이동 차단 (캐릭터가 못 지나감)
+              </label>
+
+              <label htmlFor="inspector-collider-shape">충돌 모양</label>
+              <select id="inspector-collider-shape">
+                <option value="box">상자</option>
+                <option value="cylinder">원기둥</option>
+              </select>
+
+              <label className="checkbox-row" htmlFor="inspector-use-gravity">
+                <input id="inspector-use-gravity" type="checkbox" />
+                중력 적용 (바닥/다른 오브젝트 위에 자동으로 놓기)
+              </label>
             </div>
 
             <div className="action-grid">

@@ -44,6 +44,19 @@ export function initInspector(ctx) {
     setSharedNumberField(ctx.inspectorScaleX, selected.map((object) => object.scale.x), 2);
     setSharedNumberField(ctx.inspectorScaleY, selected.map((object) => object.scale.y), 2);
     setSharedNumberField(ctx.inspectorScaleZ, selected.map((object) => object.scale.z), 2);
+
+    const allBlock = selected.every((object) => object.userData.blocksMovement);
+    const noneBlock = selected.every((object) => !object.userData.blocksMovement);
+    ctx.inspectorBlocksMovement.checked = allBlock;
+    ctx.inspectorBlocksMovement.indeterminate = !allBlock && !noneBlock;
+
+    const shapes = new Set(selected.map((object) => object.userData.colliderShape));
+    ctx.inspectorColliderShape.value = shapes.size === 1 ? selected[0].userData.colliderShape : 'box';
+
+    const allGravity = selected.every((object) => object.userData.useGravity);
+    const noneGravity = selected.every((object) => !object.userData.useGravity);
+    ctx.inspectorUseGravity.checked = allGravity;
+    ctx.inspectorUseGravity.indeterminate = !allGravity && !noneGravity;
   };
 
   ctx.duplicateSelectedObject = async () => {
@@ -102,6 +115,8 @@ export function initInspector(ctx) {
     } else {
       ctx.multiTransformSnapshot = null;
       ctx.suppressNextCanvasClick = true;
+      ctx.applyGravityToSelection();
+      ctx.updateInspectorFromSelection();
       ctx.saveLayout();
     }
   });
@@ -118,15 +133,20 @@ export function initInspector(ctx) {
     const number = Number(trimmed);
     if (Number.isNaN(number)) return;
 
-    ctx.placedObjects
-      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
-      .forEach((object) => {
-        if (component === 'rotation') {
-          object.rotation[axis] = THREE.MathUtils.degToRad(number);
-        } else {
-          object[component][axis] = number;
-        }
-      });
+    const targets = ctx.placedObjects.filter((object) => ctx.multiSelection.has(object.userData.instanceId));
+    targets.forEach((object) => {
+      if (component === 'rotation') {
+        object.rotation[axis] = THREE.MathUtils.degToRad(number);
+      } else {
+        object[component][axis] = number;
+      }
+    });
+
+    if (component === 'position' && (axis === 'x' || axis === 'z')) {
+      ctx.applyGravityToSelection();
+      setSharedNumberField(ctx.inspectorPosY, targets.map((object) => object.position.y), 2);
+    }
+
     ctx.saveLayout();
   }
 
@@ -139,6 +159,42 @@ export function initInspector(ctx) {
   ctx.inspectorScaleX.addEventListener('input', (event) => applyInspectorVector('scale', 'x', event.target.value));
   ctx.inspectorScaleY.addEventListener('input', (event) => applyInspectorVector('scale', 'y', event.target.value));
   ctx.inspectorScaleZ.addEventListener('input', (event) => applyInspectorVector('scale', 'z', event.target.value));
+
+  ctx.inspectorBlocksMovement.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const checked = event.target.checked;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.blocksMovement = checked;
+      });
+    ctx.saveLayout();
+  });
+
+  ctx.inspectorColliderShape.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const shape = event.target.value;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.colliderShape = shape;
+      });
+    ctx.syncSelectionOutlines();
+    ctx.saveLayout();
+  });
+
+  ctx.inspectorUseGravity.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const checked = event.target.checked;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.useGravity = checked;
+        if (checked) ctx.applyGravityToObject(object);
+      });
+    ctx.updateInspectorFromSelection();
+    ctx.saveLayout();
+  });
 
   ctx.deleteButton.addEventListener('click', () => ctx.removeSelectedObjects());
   ctx.duplicateButton.addEventListener('click', ctx.duplicateSelectedObject);

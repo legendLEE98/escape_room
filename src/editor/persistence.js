@@ -30,7 +30,9 @@ export function initPersistence(ctx) {
           },
           castShadow: true,
           receiveShadow: true,
-          blocksMovement: true,
+          blocksMovement: object.userData.blocksMovement,
+          colliderShape: object.userData.colliderShape,
+          useGravity: object.userData.useGravity,
           interaction: null,
         })),
     })),
@@ -50,6 +52,9 @@ export function initPersistence(ctx) {
         rotation: item.rotation,
         scale: item.scale,
         roomInstanceId: ctx.currentRoomInstanceId,
+        blocksMovement: true,
+        colliderShape: 'box',
+        useGravity: false,
       }));
     }
 
@@ -69,6 +74,9 @@ export function initPersistence(ctx) {
           rotation: item.transform.rotation,
           scale: item.transform.scale,
           roomInstanceId: room.instanceId,
+          blocksMovement: item.blocksMovement ?? true,
+          colliderShape: item.colliderShape ?? 'box',
+          useGravity: item.useGravity ?? false,
         });
       });
       return room;
