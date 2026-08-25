@@ -84,6 +84,8 @@ export function initHierarchy(ctx) {
         Number(header.dataset.roomInstanceId) === ctx.currentRoomInstanceId,
       );
     });
+    ctx.syncSelectionOutlines();
+    ctx.updateGizmoVisibility();
   };
 
   function startRenameHierarchyItem(item, object) {
@@ -201,6 +203,9 @@ export function initHierarchy(ctx) {
     addRoomButton.addEventListener('click', ctx.addRoom);
     addRoomItem.append(addRoomButton);
     ctx.hierarchyList.append(addRoomItem);
+
+    ctx.syncSelectionOutlines();
+    ctx.updateGizmoVisibility();
   };
 
   ctx.sidebarRightToggle.addEventListener('click', () => {
