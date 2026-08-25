@@ -90,6 +90,7 @@
           "castShadow": true,
           "receiveShadow": true,
           "blocksMovement": true,
+          "colliderShape": "box",
           "interaction": null
         },
         {
@@ -104,6 +105,7 @@
           "castShadow": true,
           "receiveShadow": true,
           "blocksMovement": false,
+          "colliderShape": "box",
           "interaction": null
         }
       ]
@@ -130,6 +132,7 @@
           "castShadow": true,
           "receiveShadow": true,
           "blocksMovement": false,
+          "colliderShape": "box",
           "interaction": null
         },
         {
@@ -144,6 +147,7 @@
           "castShadow": true,
           "receiveShadow": true,
           "blocksMovement": false,
+          "colliderShape": "box",
           "interaction": null
         }
       ]
@@ -156,7 +160,8 @@
 - `connectedRooms`의 각 항목은 "이 방에서 `doorObjectId` 문을 통과하면 `roomId` 방으로 이동한다"는 뜻이다. 문 오브젝트는 그 문이 속한 방의 `objects` 목록 안에 실물로 있어야 한다. 그래서 사무실↔복도를 잇는 문도 양쪽에 각각 별도 오브젝트로 존재한다 — `room-office-1`의 `obj-door-1`과 `room-office-2`의 `obj-door-1-back`은 같은 문을 양쪽에서 표현한 것이다.
 - `id`는 방과 오브젝트를 만드는 시점에 바로 부여한다 (예: `crypto.randomUUID()`). `connectedRooms`의 `doorObjectId`처럼 서로를 참조해야 해서, 저장 시점이 아니라 배치 시점부터 고정된 값이 있어야 한다.
 - `position` / `rotation` / `scale`은 Three.js의 `Vector3.toArray()` / `Euler.toArray()`와 바로 맞도록 `[x, y, z]` 배열로 저장한다. `{x, y, z}` 객체 형태는 쓰지 않는다.
-- `blocksMovement`가 `true`(기본값)인 오브젝트는 로드 시 `Box3`로 충돌 영역을 자동 계산해서 캐릭터 이동을 막는다. 벽에 붙은 액자나 시계처럼 캐릭터가 닿을 일이 없는 오브젝트는 `false`로 꺼서 불필요한 충돌 계산을 뺀다. 자동 계산된 박스가 안 맞는 특수한 경우(예: L자형 소파)에 한해서만 나중에 `collider` 같은 override 필드를 추가로 검토한다 — 처음부터 넣지 않는다.
+- `blocksMovement`가 `true`(기본값)인 오브젝트는 로드 시 `Box3`로 충돌 영역을 자동 계산해서 캐릭터 이동을 막는다. 벽에 붙은 액자나 시계처럼 캐릭터가 닿을 일이 없는 오브젝트는 `false`로 꺼서 불필요한 충돌 계산을 뺀다.
+- `colliderShape`는 `box`(기본값) 또는 `cylinder`다. 사각형 가구는 `box`(오브젝트 바운딩 박스로 XZ 평면 사각형 판정), 기둥·원형 오브젝트는 `cylinder`(바운딩 박스에서 반지름을 뽑아 원-원 판정)로 지정한다. `box`로 원형 오브젝트를 감싸면 실제로는 안 닿았는데 모서리 부분에서 막히는 "가짜 충돌"이 생기기 때문에 나눴다. 충돌/밀기 관련 세부 규칙은 [게임 플레이](./GAMEPLAY.md)의 "이동과 충돌" 절을 참고한다.
 - `interaction`은 상호작용이 없는 오브젝트가 대부분이라 기본값을 `null`로 둔다. 있을 때만 아래처럼 채운다.
 
 ### interaction 채워진 예시

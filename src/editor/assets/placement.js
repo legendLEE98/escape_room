@@ -36,6 +36,9 @@ export function initPlacement(ctx) {
         if (transform.name) container.name = transform.name;
       }
       container.userData.roomInstanceId = transform?.roomInstanceId ?? ctx.currentRoomInstanceId;
+      container.userData.blocksMovement = transform?.blocksMovement ?? true;
+      container.userData.colliderShape = transform?.colliderShape ?? 'box';
+      container.userData.useGravity = transform?.useGravity ?? false;
 
       ctx.editorRoot.add(container);
       ctx.placedObjects.push(container);

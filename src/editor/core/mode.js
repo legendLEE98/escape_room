@@ -45,12 +45,12 @@ export function initMode(ctx) {
       ctx.resetCharacterMovement();
       ctx.editorLayoutBounds = ctx.computeEditorLayoutBounds();
       if (ctx.editorLayoutBounds) {
-        ctx.character.position.set(
-          (ctx.editorLayoutBounds.min.x + ctx.editorLayoutBounds.max.x) / 2,
-          0,
-          (ctx.editorLayoutBounds.min.z + ctx.editorLayoutBounds.max.z) / 2,
-        );
+        const centerX = (ctx.editorLayoutBounds.min.x + ctx.editorLayoutBounds.max.x) / 2;
+        const centerZ = (ctx.editorLayoutBounds.min.z + ctx.editorLayoutBounds.max.z) / 2;
+        const spawn = ctx.findValidSpawnPosition(centerX, centerZ);
+        ctx.character.position.set(spawn.x, 0, spawn.z);
       }
+      ctx.startCharacterFall();
       ctx.camera.position.copy(ctx.character.position).add(ctx.cameraOffset);
       ctx.camera.lookAt(
         ctx.character.position.x,

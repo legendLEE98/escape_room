@@ -5,6 +5,7 @@ import { initMode } from './core/mode.js';
 import { initCameraView } from './core/camera-view.js';
 import { initMovement } from './core/movement.js';
 import { initSelectionOutline } from './core/selection-outline.js';
+import { initGravity } from './core/gravity.js';
 import { initRooms } from './right-sidebar/rooms.js';
 import { initAssetCatalog } from './assets/catalog.js';
 import { initPlacement } from './assets/placement.js';
@@ -39,6 +40,7 @@ export function createScene(canvas, mapId) {
   initCameraView(ctx);
   initMovement(ctx);
   initSelectionOutline(ctx);
+  initGravity(ctx);
   initRooms(ctx);
   initAssetCatalog(ctx);
   initPlacement(ctx);
@@ -57,7 +59,9 @@ export function createScene(canvas, mapId) {
     requestAnimationFrame(animate);
     const delta = Math.min(ctx.clock.getDelta(), 0.05);
     ctx.mixer?.update(delta);
+    ctx.updateCharacterGravity(delta);
     ctx.updateMovement(delta);
+    ctx.updateCharacterCollisionDebug();
     ctx.updateQuarterView(delta);
     ctx.updateEditorCameraMovement(delta);
     if (ctx.currentMode === 'editor') ctx.orbitControls.update();
