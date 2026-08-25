@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createScene } from './editor/index.js';
+import { createScene } from '../editor/index.js';
 
 export default function Editor({ mapId, onBack }) {
   const canvasRef = useRef(null);
@@ -85,20 +85,23 @@ export default function Editor({ mapId, onBack }) {
           <span className="sidebar-toggle-icon">›</span>
         </button>
         <div className="sidebar-body sidebar-right-body">
-          <section className="hierarchy-panel">
-            <div className="sidebar-heading">
-              <p className="eyebrow">HIERARCHY</p>
-            </div>
+          <nav className="right-tabs" aria-label="사이드바 탭">
+            <button type="button" className="right-tab is-active" data-tab="objects">
+              오브젝트
+            </button>
+            <button type="button" className="right-tab" data-tab="properties">
+              속성
+            </button>
+            <button type="button" className="right-tab" data-tab="interaction">
+              상호작용
+            </button>
+          </nav>
+
+          <section className="right-tab-panel" data-tab-panel="objects">
             <ul id="hierarchy-list" className="hierarchy-list" aria-label="배치된 객체 목록" />
           </section>
 
-          <div className="sidebar-divider-h" />
-
-          <section className="inspector-panel">
-            <div className="sidebar-heading">
-              <p className="eyebrow">INSPECTOR</p>
-            </div>
-
+          <section className="right-tab-panel" data-tab-panel="properties" hidden>
             <p id="inspector-empty" className="help">
               오브젝트를 선택하면 속성이 여기에 표시됩니다.
             </p>
@@ -163,10 +166,6 @@ export default function Editor({ mapId, onBack }) {
                   <input id="inspector-scale-z" type="number" step="0.1" aria-label="크기 Z" />
                 </div>
               </div>
-
-              <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
-              <input id="inspector-bg-image" type="file" accept="image/*" />
-              <img id="inspector-bg-preview" alt="" hidden />
             </div>
 
             <div className="action-grid">
@@ -176,6 +175,18 @@ export default function Editor({ mapId, onBack }) {
               <button id="delete-object" className="danger-button" disabled>
                 삭제
               </button>
+            </div>
+          </section>
+
+          <section className="right-tab-panel" data-tab-panel="interaction" hidden>
+            <p id="interaction-empty" className="help">
+              오브젝트를 선택하면 상호작용 설정이 여기에 표시됩니다.
+            </p>
+
+            <div id="interaction-body" hidden>
+              <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
+              <input id="inspector-bg-image" type="file" accept="image/*" />
+              <img id="inspector-bg-preview" alt="" hidden />
             </div>
           </section>
         </div>

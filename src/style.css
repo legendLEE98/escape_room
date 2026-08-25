@@ -437,7 +437,7 @@ kbd {
 .sidebar-body,
 .asset-grid,
 .hierarchy-list,
-.inspector-panel {
+.right-tab-panel {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -445,7 +445,7 @@ kbd {
 .sidebar-body::-webkit-scrollbar,
 .asset-grid::-webkit-scrollbar,
 .hierarchy-list::-webkit-scrollbar,
-.inspector-panel::-webkit-scrollbar {
+.right-tab-panel::-webkit-scrollbar {
   display: none;
 }
 
@@ -464,26 +464,49 @@ kbd {
   overflow: hidden;
 }
 
-.hierarchy-panel {
+.right-tabs {
   display: flex;
-  flex: 1 1 45%;
-  flex-direction: column;
-  min-height: 0;
+  flex: none;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid #2b3748;
+  border-radius: 10px;
+  background: #111925;
 }
 
-.inspector-panel {
+.right-tab {
+  flex: 1;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 7px;
+  color: #8d9aac;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.right-tab:hover {
+  color: #dce6f4;
+  background: rgb(255 255 255 / 6%);
+}
+
+.right-tab.is-active {
+  color: #07111d;
+  background: #8fc5ff;
+}
+
+.right-tab-panel {
   display: flex;
-  flex: 1 1 55%;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: auto;
 }
 
-.sidebar-divider-h {
-  flex: none;
-  height: 1px;
-  margin: 14px 0;
-  background: rgb(255 255 255 / 8%);
+.right-tab-panel[hidden] {
+  display: none;
 }
 
 .hierarchy-list {

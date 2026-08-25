@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import Landing from './Landing.jsx';
-import Lobby from './Lobby.jsx';
-import MapList from './MapList.jsx';
-import Editor from './Editor.jsx';
+import Landing from './screens/Landing.jsx';
+import Lobby from './screens/Lobby.jsx';
+import MapList from './screens/MapList.jsx';
+import Editor from './screens/Editor.jsx';
 
 export default function App() {
   const [screen, setScreen] = useState('landing');
