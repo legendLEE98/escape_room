@@ -542,77 +542,56 @@ kbd {
   list-style: none;
 }
 
-.hierarchy-room-header {
+.hierarchy-object {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 8px;
-  padding: 7px 9px 7px 5px;
-  border-left: 3px solid transparent;
-  border-radius: 6px;
-  color: #78ade7;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  text-transform: uppercase;
-}
-
-.hierarchy-room-header:first-child {
-  margin-top: 0;
-}
-
-.hierarchy-room-header:hover {
-  background: rgb(255 255 255 / 5%);
-}
-
-.hierarchy-room-header.is-current-room {
-  border-left-color: #78ade7;
-  color: #9dcdff;
-}
-
-.hierarchy-room-header::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.hierarchy-room-header.is-current-room::before {
-  background: #78ade7;
-}
-
-.hierarchy-room-header-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hierarchy-room-delete {
-  flex: none;
-  padding: 2px 7px;
-  border: 0;
-  border-radius: 5px;
-  color: #67768a;
-  background: transparent;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.hierarchy-room-delete:hover {
-  color: #ff9b9b;
-  background: rgb(255 155 155 / 12%);
-}
-
-.hierarchy-object {
+  gap: 5px;
   padding: 8px 9px 8px 18px;
   border-radius: 6px;
   color: #cbd4e1;
   font-size: 12px;
   cursor: pointer;
+}
+
+.hierarchy-object-visibility {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #67768a;
+  cursor: pointer;
+}
+
+.hierarchy-object-visibility:hover {
+  color: #9dcdff;
+}
+
+.hierarchy-object.is-hidden .hierarchy-object-label {
+  color: #4d5768;
+}
+
+.hierarchy-object-toggle {
+  display: flex;
+  flex: none;
+  width: 14px;
+  align-items: center;
+  justify-content: center;
+  color: #67768a;
+  font-size: 9px;
+}
+
+.hierarchy-object-toggle:not(.is-empty):hover {
+  color: #9dcdff;
+}
+
+.hierarchy-object-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hierarchy-object:hover {
@@ -624,28 +603,121 @@ kbd {
   background: #16263a;
 }
 
-.hierarchy-add-room {
-  margin-top: 8px;
+.hierarchy-object[draggable="true"] {
+  cursor: grab;
 }
 
-.hierarchy-add-room-button {
+.hierarchy-object.drag-over-inside {
+  outline: 1px dashed #78ade7;
+  outline-offset: -1px;
+  background: rgb(120 173 231 / 12%);
+}
+
+.hierarchy-object.drag-over-before {
+  box-shadow: inset 0 2px 0 0 #78ade7;
+}
+
+.hierarchy-object.drag-over-after {
+  box-shadow: inset 0 -2px 0 0 #78ade7;
+}
+
+.hierarchy-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  width: 100%;
+  flex-direction: column;
+  gap: 6px;
+  margin: -4px -4px 6px;
+  padding: 6px;
+  border-bottom: 1px solid #2b3748;
+  background: #111925;
+}
+
+.hierarchy-toolbar.is-drag-over {
+  outline: 1px dashed #78ade7;
+  outline-offset: -1px;
+  background: rgb(120 173 231 / 12%);
+}
+
+.hierarchy-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.hierarchy-toolbar-room {
+  min-width: 0;
+}
+
+.hierarchy-room-select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #2b3748;
+  border-radius: 6px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hierarchy-room-rename-input {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  padding: 5px 6px;
+  border: 1px solid #78ade7;
+  border-radius: 6px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hierarchy-room-icon-button {
+  display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  padding: 10px;
-  border: 1px dashed #2b3748;
-  border-radius: 8px;
-  background: transparent;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   color: #67768a;
-  font-size: 15px;
-  font-weight: 700;
+  background: transparent;
   cursor: pointer;
 }
 
-.hierarchy-add-room-button:hover {
-  border-color: #53667f;
+.hierarchy-room-icon-button:hover {
   color: #9dcdff;
+  background: rgb(255 255 255 / 6%);
+}
+
+.hierarchy-toolbar-actions {
+  gap: 4px;
+}
+
+.hierarchy-toolbar-icon {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0;
+  border: 1px dashed #2b3748;
+  border-radius: 6px;
+  color: #8d9aac;
+  background: transparent;
+  cursor: pointer;
+}
+
+.hierarchy-toolbar-icon:hover {
+  border-color: #53667f;
+  border-style: solid;
+  color: #9dcdff;
+  background: rgb(255 255 255 / 5%);
 }
 
 .vector-row {
@@ -942,4 +1014,33 @@ kbd {
   .editor-hint {
     display: none;
   }
+}
+
+.hierarchy-context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  background: #131c29;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.hierarchy-context-menu-item {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: #cbd4e1;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hierarchy-context-menu-item:hover {
+  color: #9dcdff;
+  background: rgb(255 255 255 / 6%);
 }
