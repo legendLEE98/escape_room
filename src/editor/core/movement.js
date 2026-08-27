@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 
-const modelHeadingCorrection = THREE.MathUtils.degToRad(-17);
 const CHARACTER_RADIUS = 0.32;
 const DROP_HEIGHT = 4;
 const GRAVITY_ACCELERATION = 18;
@@ -76,14 +75,15 @@ export function initMovement(ctx) {
     const size = box.getSize(new THREE.Vector3());
     const localCenter = ctx.character.worldToLocal(center.clone());
 
-    ctx.loadedModel.position.x -= localCenter.x;
-    ctx.loadedModel.position.z -= localCenter.z;
-    ctx.loadedModel.position.y -= localCenter.y - size.y / 2;
-
     if (characterScale === null) {
       const largestDimension = Math.max(size.x, size.y, size.z);
       characterScale = largestDimension > 0 ? 1.35 / largestDimension : 1;
     }
+
+    ctx.loadedModel.position.x -= localCenter.x;
+    ctx.loadedModel.position.z -= localCenter.z;
+    ctx.loadedModel.position.y -= localCenter.y - size.y / 2;
+
     ctx.character.scale.setScalar(characterScale);
     ctx.loadedModel.updateMatrixWorld(true);
   }
@@ -184,8 +184,7 @@ export function initMovement(ctx) {
   };
 
   function rotateTowardsMovement(delta) {
-    const targetRotation =
-      Math.atan2(movementDirection.x, movementDirection.z) + modelHeadingCorrection;
+    const targetRotation = Math.atan2(movementDirection.x, movementDirection.z);
     const rotationDifference = Math.atan2(
       Math.sin(targetRotation - ctx.character.rotation.y),
       Math.cos(targetRotation - ctx.character.rotation.y),
@@ -196,6 +195,15 @@ export function initMovement(ctx) {
   ctx.setDestination = (event) => {
     if (ctx.currentMode !== 'movement' || ctx.isFalling) return;
     ctx.setPointer(event);
+
+    const objectHits = ctx.raycaster.intersectObjects(ctx.placedObjects, true);
+    if (objectHits.length) {
+      const object = ctx.findPlacedAncestor(objectHits[0].object);
+      if (object?.userData.interactionType === 'door' && object.userData.blocksMovement) {
+        object.userData.blocksMovement = false;
+        return;
+      }
+    }
 
     const hit = ctx.raycaster.intersectObject(ctx.navigationSurface, false)[0];
     if (!hit || !ctx.isInsideActiveMap(hit.point)) return;

@@ -200,6 +200,17 @@ export default function Editor({ mapId, onBack }) {
             </p>
 
             <div id="interaction-body" hidden>
+              <label htmlFor="interaction-type">상호작용 종류</label>
+              <select id="interaction-type">
+                <option value="none">없음</option>
+                <option value="door">문 (다른 방으로 연결)</option>
+              </select>
+
+              <div id="interaction-door-fields" hidden>
+                <label htmlFor="interaction-connected-room">연결할 방</label>
+                <select id="interaction-connected-room" />
+              </div>
+
               <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
               <input id="inspector-bg-image" type="file" accept="image/*" />
               <img id="inspector-bg-preview" alt="" hidden />

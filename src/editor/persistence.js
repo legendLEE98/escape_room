@@ -11,15 +11,25 @@ export function initPersistence(ctx) {
       : legacyLayoutStorageKey;
 
   ctx.serializeLayout = () => ({
-    rooms: ctx.rooms.map((room) => ({
-      id: `room-${room.instanceId}`,
-      roomName: room.name,
-      isStartRoom: room.isStartRoom,
-      initialSpawnPos: [0, 0, 0],
-      connectedRooms: [],
-      objects: ctx.placedObjects
-        .filter((object) => object.userData.roomInstanceId === room.instanceId)
+    rooms: ctx.rooms.map((room) => {
+      const roomObjects = ctx.placedObjects.filter(
+        (object) => ctx.getObjectRoomInstanceId(object) === room.instanceId,
+      );
+      const connectedRooms = roomObjects
+        .filter((object) => object.userData.interactionType === 'door' && object.userData.connectedRoomId != null)
         .map((object) => ({
+          roomId: `room-${object.userData.connectedRoomId}`,
+          doorObjectId: `obj-${object.userData.instanceId}`,
+        }));
+      const spawnObject = roomObjects.find((object) => object.userData.isSpawnPoint);
+
+      return {
+        id: `room-${room.instanceId}`,
+        roomName: room.name,
+        isStartRoom: room.isStartRoom,
+        initialSpawnPos: spawnObject ? spawnObject.position.toArray() : [0, 0, 0],
+        connectedRooms,
+        objects: roomObjects.map((object) => ({
           id: `obj-${object.userData.instanceId}`,
           name: object.name,
           glbUrl: object.userData.assetUrl,
@@ -33,9 +43,22 @@ export function initPersistence(ctx) {
           blocksMovement: object.userData.blocksMovement,
           colliderShape: object.userData.colliderShape,
           useGravity: object.userData.useGravity,
-          interaction: null,
+          isSpawnPoint: Boolean(object.userData.isSpawnPoint),
+          visible: object.visible,
+          collapsed: ctx.collapsedInstanceIds.has(object.userData.instanceId),
+          parentObjectId:
+            object.userData.parentInstanceId != null ? `obj-${object.userData.parentInstanceId}` : null,
+          interaction: object.userData.interactionType
+            ? {
+                interactionType: object.userData.interactionType,
+                bgImageUrl: object.userData.bgImageUrl || null,
+                connectedRoomId:
+                  object.userData.connectedRoomId != null ? `room-${object.userData.connectedRoomId}` : null,
+              }
+            : null,
         })),
-    })),
+      };
+    }),
   });
 
   ctx.saveLayout = () => {
@@ -59,16 +82,22 @@ export function initPersistence(ctx) {
     }
 
     const savedRooms = Array.isArray(saved) ? saved : saved.rooms || [];
-    const items = [];
+    const roomIdMap = new Map();
     ctx.rooms = savedRooms.map((savedRoom, index) => {
-      const room = {
-        instanceId: ctx.nextRoomInstanceId++,
-        name: savedRoom.roomName || `방${index + 1}`,
-        isStartRoom: Boolean(savedRoom.isStartRoom),
-      };
+      const room = ctx.createRoom(savedRoom.roomName || `방${index + 1}`, Boolean(savedRoom.isStartRoom));
+      roomIdMap.set(savedRoom.id, room.instanceId);
+      return room;
+    });
+
+    const items = [];
+    savedRooms.forEach((savedRoom, index) => {
+      const room = ctx.rooms[index];
       (savedRoom.objects || []).forEach((item) => {
+        const interaction = item.interaction || {};
         items.push({
-          asset: ctx.assetCatalog.find((candidate) => candidate.url === item.glbUrl),
+          asset: item.glbUrl ? ctx.assetCatalog.find((candidate) => candidate.url === item.glbUrl) : null,
+          isEmpty: !item.glbUrl,
+          isSpawnPoint: Boolean(item.isSpawnPoint),
           name: item.name,
           position: item.transform.position,
           rotation: item.transform.rotation,
@@ -77,10 +106,16 @@ export function initPersistence(ctx) {
           blocksMovement: item.blocksMovement ?? true,
           colliderShape: item.colliderShape ?? 'box',
           useGravity: item.useGravity ?? false,
+          interactionType: interaction.interactionType ?? null,
+          connectedRoomId: interaction.connectedRoomId ? roomIdMap.get(interaction.connectedRoomId) ?? null : null,
+          visible: item.visible ?? true,
+          collapsed: Boolean(item.collapsed),
+          savedId: item.id,
+          parentObjectId: item.parentObjectId ?? null,
         });
       });
-      return room;
     });
+
     ctx.ensureDefaultRoom();
     ctx.currentRoomInstanceId = ctx.rooms[0].instanceId;
     return items;
@@ -102,9 +137,31 @@ export function initPersistence(ctx) {
 
     const items = collectRestoreItems(saved);
     ctx.editorStatus.textContent = `저장된 객체 ${items.length}개를 복원하는 중...`;
+    const idMap = new Map();
     for (const item of items) {
-      if (item.asset) await ctx.addAsset(item.asset, item, false);
+      let container = null;
+      if (item.isSpawnPoint) {
+        container = ctx.addSpawnPoint(item, false);
+      } else if (item.isEmpty) {
+        container = ctx.addEmptyObject(item, false);
+      } else if (item.asset) {
+        container = await ctx.addAsset(item.asset, item, false);
+      }
+      if (container) {
+        container.visible = item.visible ?? true;
+        if (item.collapsed) ctx.collapsedInstanceIds.add(container.userData.instanceId);
+      }
+      if (container && item.savedId) idMap.set(item.savedId, container);
     }
+    items.forEach((item) => {
+      if (!item.parentObjectId) return;
+      const child = item.savedId ? idMap.get(item.savedId) : null;
+      const parent = idMap.get(item.parentObjectId);
+      if (!child || !parent || child === parent) return;
+      parent.add(child);
+      child.userData.parentInstanceId = parent.userData.instanceId;
+    });
+    ctx.applyRoomVisibility();
     ctx.selectEditorObject(null);
     ctx.syncHierarchy();
     ctx.editorStatus.textContent = `저장된 객체 ${ctx.placedObjects.length}개를 복원했습니다.`;

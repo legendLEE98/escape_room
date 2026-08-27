@@ -1,23 +1,51 @@
+import * as THREE from 'three';
+
 export function initRooms(ctx) {
   ctx.rooms = [];
   ctx.nextRoomInstanceId = 1;
   ctx.currentRoomInstanceId = null;
 
+  function createRoom(name, isStartRoom) {
+    const room = { instanceId: ctx.nextRoomInstanceId++, name, isStartRoom };
+    room.root = new THREE.Group();
+    room.root.name = name;
+    room.root.userData.isRoomRoot = true;
+    room.root.userData.roomInstanceId = room.instanceId;
+    room.root.visible = false;
+    ctx.editorRoot.add(room.root);
+    return room;
+  }
+
+  ctx.createRoom = createRoom;
+
+  ctx.getObjectRoomInstanceId = (object) => {
+    let current = object;
+    while (current) {
+      if (current.userData.isRoomRoot) return current.userData.roomInstanceId;
+      current = current.parent;
+    }
+    return null;
+  };
+
+  ctx.applyRoomVisibility = () => {
+    ctx.rooms.forEach((room) => {
+      room.root.visible = room.instanceId === ctx.currentRoomInstanceId;
+    });
+  };
+
   ctx.ensureDefaultRoom = () => {
     if (ctx.rooms.length > 0) return;
-    const room = { instanceId: ctx.nextRoomInstanceId++, name: '방1', isStartRoom: true };
+    const room = createRoom('방1', true);
     ctx.rooms.push(room);
     ctx.currentRoomInstanceId = room.instanceId;
+    ctx.applyRoomVisibility();
   };
 
   ctx.addRoom = () => {
-    const room = {
-      instanceId: ctx.nextRoomInstanceId++,
-      name: `방${ctx.rooms.length + 1}`,
-      isStartRoom: ctx.rooms.length === 0,
-    };
+    const room = createRoom(`방${ctx.rooms.length + 1}`, ctx.rooms.length === 0);
     ctx.rooms.push(room);
     ctx.currentRoomInstanceId = room.instanceId;
+    ctx.applyRoomVisibility();
     ctx.syncHierarchy();
     ctx.saveLayout();
   };
@@ -29,7 +57,7 @@ export function initRooms(ctx) {
     }
 
     const targets = ctx.placedObjects.filter(
-      (object) => object.userData.roomInstanceId === room.instanceId,
+      (object) => ctx.getObjectRoomInstanceId(object) === room.instanceId,
     );
     const confirmed = window.confirm(
       `"${room.name}" 방을 삭제합니다. 방 안의 오브젝트 ${targets.length}개가 함께 삭제되며 되돌릴 수 없습니다. 계속할까요?`,
@@ -39,9 +67,10 @@ export function initRooms(ctx) {
     targets.forEach((object) => {
       const index = ctx.placedObjects.indexOf(object);
       if (index >= 0) ctx.placedObjects.splice(index, 1);
-      object.removeFromParent();
       ctx.multiSelection.delete(object.userData.instanceId);
     });
+    room.root.removeFromParent();
+
     if (ctx.selectedEditorObject && !ctx.placedObjects.includes(ctx.selectedEditorObject)) {
       ctx.selectedEditorObject = null;
       ctx.transformControls.detach();
@@ -54,6 +83,7 @@ export function initRooms(ctx) {
     if (ctx.currentRoomInstanceId === room.instanceId) {
       ctx.currentRoomInstanceId = ctx.rooms[0]?.instanceId ?? null;
     }
+    ctx.applyRoomVisibility();
 
     ctx.updateInspectorFromSelection();
     ctx.syncHierarchy();
@@ -66,7 +96,8 @@ export function initRooms(ctx) {
     ctx.selectedEditorObject = null;
     ctx.transformControls.detach();
     ctx.currentRoomInstanceId = room.instanceId;
+    ctx.applyRoomVisibility();
     ctx.updateInspectorFromSelection();
-    ctx.syncHierarchyHighlight();
+    ctx.syncHierarchy();
   };
 }

@@ -10,6 +10,18 @@ export function initInspector(ctx) {
   ctx.multiTransformSnapshot = null;
   ctx.suppressNextCanvasClick = false;
 
+  function hasSelectedAncestor(object) {
+    let currentParentId = object.userData.parentInstanceId;
+    const visited = new Set();
+    while (currentParentId != null) {
+      if (ctx.multiSelection.has(currentParentId)) return true;
+      if (visited.has(currentParentId)) break;
+      visited.add(currentParentId);
+      currentParentId = ctx.findByInstanceId(currentParentId)?.userData.parentInstanceId;
+    }
+    return false;
+  }
+
   ctx.updateInspectorFromSelection = () => {
     ctx.updateInteractionFromSelection();
 
@@ -61,16 +73,24 @@ export function initInspector(ctx) {
 
   ctx.duplicateSelectedObject = async () => {
     if (!ctx.selectedEditorObject || ctx.multiSelection.size !== 1) return;
-    const asset = ctx.assetCatalog.find(
-      (candidate) => candidate.file === ctx.selectedEditorObject.userData.assetFile,
-    );
-    if (!asset) return;
     const transform = {
       position: ctx.selectedEditorObject.position.clone().add(new THREE.Vector3(0.5, 0, 0.5)).toArray(),
       rotation: ctx.selectedEditorObject.rotation.toArray(),
       scale: ctx.selectedEditorObject.scale.toArray(),
-      roomInstanceId: ctx.selectedEditorObject.userData.roomInstanceId,
+      roomInstanceId: ctx.getObjectRoomInstanceId(ctx.selectedEditorObject),
+      blocksMovement: ctx.selectedEditorObject.userData.blocksMovement,
+      colliderShape: ctx.selectedEditorObject.userData.colliderShape,
+      useGravity: ctx.selectedEditorObject.userData.useGravity,
     };
+
+    if (!ctx.selectedEditorObject.userData.assetFile) {
+      ctx.addEmptyObject(transform);
+      return;
+    }
+    const asset = ctx.assetCatalog.find(
+      (candidate) => candidate.file === ctx.selectedEditorObject.userData.assetFile,
+    );
+    if (!asset) return;
     await ctx.addAsset(asset, transform);
   };
 
@@ -101,7 +121,7 @@ export function initInspector(ctx) {
       if (ctx.multiSelection.size > 1 && ctx.selectedEditorObject) {
         ctx.multiTransformSnapshot = new Map();
         ctx.placedObjects
-          .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+          .filter((object) => ctx.multiSelection.has(object.userData.instanceId) && !hasSelectedAncestor(object))
           .forEach((object) => {
             ctx.multiTransformSnapshot.set(object.userData.instanceId, {
               position: object.position.clone(),
