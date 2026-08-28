@@ -89,8 +89,29 @@ body.sidebar-right-collapsed .mode-bar {
   backdrop-filter: blur(18px);
 }
 
-body:not([data-mode="editor"]) .view-switch {
-  visibility: hidden;
+.mode-switch[hidden],
+.view-switch[hidden] {
+  display: none;
+}
+
+.view-switch {
+  gap: 0;
+}
+
+.view-switch .tool-button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.view-switch .tool-button:hover {
+  border: 0;
+  background: rgb(255 255 255 / 6%);
+}
+
+.view-switch .tool-button + .tool-button {
+  border-left: 1px solid rgb(255 255 255 / 14%);
 }
 
 .mode-button {
@@ -530,15 +551,19 @@ kbd {
   display: none;
 }
 
-.hierarchy-list {
-  flex: 1;
-  min-height: 0;
-  margin: 9px 0 0;
-  padding: 4px;
-  overflow-y: auto;
+.right-tab-panel[data-tab-panel="objects"] {
+  overflow: hidden;
   border: 1px solid #2b3748;
   border-radius: 9px;
   background: #111925;
+}
+
+.hierarchy-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
   list-style: none;
 }
 
@@ -621,33 +646,19 @@ kbd {
   box-shadow: inset 0 -2px 0 0 #78ade7;
 }
 
-.hierarchy-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+.hierarchy-header {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: -4px -4px 6px;
-  padding: 6px;
-  border-bottom: 1px solid #2b3748;
-  background: #111925;
-}
-
-.hierarchy-toolbar.is-drag-over {
-  outline: 1px dashed #78ade7;
-  outline-offset: -1px;
-  background: rgb(120 173 231 / 12%);
-}
-
-.hierarchy-toolbar-row {
-  display: flex;
+  flex: none;
   align-items: center;
   gap: 3px;
+  padding: 8px;
+  border-bottom: 1px solid #2b3748;
 }
 
-.hierarchy-toolbar-room {
-  min-width: 0;
+.hierarchy-header.is-drag-over {
+  outline: 1px dashed #78ade7;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .hierarchy-room-select {
@@ -695,16 +706,22 @@ kbd {
   background: rgb(255 255 255 / 6%);
 }
 
-.hierarchy-toolbar-actions {
+.hierarchy-footer {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
   gap: 4px;
+  padding: 8px;
+  border-top: 1px solid #2b3748;
 }
 
 .hierarchy-toolbar-icon {
   display: flex;
-  flex: 1;
+  flex: none;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  height: 26px;
   padding: 0;
   border: 1px dashed #2b3748;
   border-radius: 6px;
@@ -718,6 +735,11 @@ kbd {
   border-style: solid;
   color: #9dcdff;
   background: rgb(255 255 255 / 5%);
+}
+
+.hierarchy-toolbar-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .vector-row {
@@ -788,6 +810,99 @@ kbd {
   font-size: 10px;
   backdrop-filter: blur(14px);
   transform: translateX(-50%);
+}
+
+.room-builder-name-panel {
+  position: fixed;
+  z-index: 12;
+  top: 84px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 200px;
+  padding: 14px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  color: #dce6f4;
+  background: rgb(8 12 18 / 92%);
+  backdrop-filter: blur(14px);
+}
+
+.room-builder-name-panel[hidden] {
+  display: none;
+}
+
+.room-builder-name-panel label {
+  color: #8d9aac;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.room-builder-name-panel input[type="text"] {
+  padding: 8px 10px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 12px;
+}
+
+.room-builder-panel {
+  position: fixed;
+  z-index: 12;
+  bottom: 24px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  color: #dce6f4;
+  background: rgb(8 12 18 / 92%);
+  backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+}
+
+.room-builder-panel[hidden] {
+  display: none;
+}
+
+.room-builder-status {
+  margin: 0;
+  color: #8fc5ff;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.room-builder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.room-builder-actions button {
+  flex: 1;
+  min-width: 96px;
+  padding: 9px 18px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  color: #8d9aac;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.room-builder-actions button:hover {
+  color: #dce6f4;
+  background: rgb(255 255 255 / 6%);
+}
+
+.room-builder-actions .primary-button {
+  width: auto;
+  margin-top: 0;
 }
 
 .back-button {

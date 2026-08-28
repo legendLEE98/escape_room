@@ -298,33 +298,66 @@ export function initMovement(ctx) {
     );
   };
 
-  ctx.loader.load(
-    '/models/quirky_series_-_free_animals_pack.glb',
-    (gltf) => {
-      ctx.loadedModel = gltf.scene;
-      ctx.loadedModel.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        const isSquid = materials.some((material) => material?.name === 'M_Inkfish');
-        child.visible = isSquid;
-        if (isSquid) ctx.squidMeshes.push(child);
-      });
-      ctx.character.add(ctx.loadedModel);
+  const CHARACTER_DIRECTORY = '/models/assets/character/';
+  const FALLBACK_CHARACTER_FILE = 'quirky_series_-_free_animals_pack.glb';
 
-      if (gltf.animations.length) {
-        ctx.mixer = new THREE.AnimationMixer(ctx.loadedModel);
-        gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+  async function resolveCharacterUrl() {
+    try {
+      const response = await fetch(`${CHARACTER_DIRECTORY}character-index.json`, { cache: 'no-store' });
+      if (response.ok) {
+        const data = await response.json();
+        const file = data.files?.[0];
+        if (file) return `${CHARACTER_DIRECTORY}${encodeURIComponent(file)}`;
       }
+    } catch (error) {
+      console.warn('Character index unavailable, falling back to default character.', error);
+    }
+    return `${CHARACTER_DIRECTORY}${encodeURIComponent(FALLBACK_CHARACTER_FILE)}`;
+  }
 
-      applySquidPose(false);
-    },
-    undefined,
-    (error) => {
-      console.error(error);
-    },
-  );
+  resolveCharacterUrl().then((url) => {
+    ctx.loader.load(
+      url,
+      (gltf) => {
+        ctx.loadedModel = gltf.scene;
+        const meshes = [];
+        ctx.loadedModel.traverse((child) => {
+          if (!child.isMesh) return;
+          child.castShadow = true;
+          child.receiveShadow = true;
+          meshes.push(child);
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          if (materials.some((material) => material?.name === 'M_Inkfish')) {
+            ctx.squidMeshes.push(child);
+          }
+        });
+        // The bundled animal pack has many characters baked into one file and needs
+        // this tag to isolate just the squid meshes. A dedicated single-character
+        // file won't have that tag at all, so fall back to showing everything.
+        if (ctx.squidMeshes.length > 0) {
+          meshes.forEach((mesh) => {
+            mesh.visible = ctx.squidMeshes.includes(mesh);
+          });
+        } else {
+          meshes.forEach((mesh) => {
+            mesh.visible = true;
+          });
+        }
+        ctx.character.add(ctx.loadedModel);
+
+        if (gltf.animations.length) {
+          ctx.mixer = new THREE.AnimationMixer(ctx.loadedModel);
+          gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+        }
+
+        applySquidPose(false);
+      },
+      undefined,
+      (error) => {
+        console.error(error);
+      },
+    );
+  });
 
   ctx.canvas.addEventListener('pointerdown', ctx.setDestination);
 }

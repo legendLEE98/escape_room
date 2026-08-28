@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { $$ } from '../dom.js';
 
 export function initMode(ctx) {
@@ -22,6 +23,8 @@ export function initMode(ctx) {
     ctx.currentMode = mode;
     document.body.dataset.mode = mode;
     const isEditor = mode === 'editor';
+    const isMovement = mode === 'movement';
+    const isRoomBuilder = mode === 'roomBuilder';
 
     $$('.mode-button').forEach((button) => {
       button.classList.toggle('is-active', button.dataset.mode === mode);
@@ -29,22 +32,55 @@ export function initMode(ctx) {
     ctx.sidebarLeft.hidden = !isEditor;
     ctx.sidebarRight.hidden = !isEditor;
     ctx.editorHint.hidden = !isEditor;
-    ctx.character.visible = !isEditor;
-    ctx.destinationMarker.visible = !isEditor && ctx.isMoving;
-    ctx.orbitControls.enabled = isEditor;
+    ctx.viewSwitch.hidden = !isEditor;
+    ctx.modeSwitch.hidden = isRoomBuilder;
+    ctx.roomBuilderPanel.hidden = !isRoomBuilder;
+    ctx.roomBuilderNamePanel.hidden = !isRoomBuilder;
+    ctx.character.visible = isMovement;
+    ctx.destinationMarker.visible = isMovement && ctx.isMoving;
+    ctx.orbitControls.enabled = isEditor || isRoomBuilder;
+    ctx.orbitControls.mouseButtons.LEFT = isRoomBuilder ? null : THREE.MOUSE.PAN;
+    ctx.orbitControls.enableRotate = !isRoomBuilder;
     ctx.updateGizmoVisibility();
     ctx.selectionOutlineGroup.visible = isEditor;
 
-    ctx.floor.visible = isEditor;
-    ctx.grid.visible = isEditor;
+    ctx.floor.visible = isEditor || isRoomBuilder;
+    ctx.grid.visible = isEditor || isRoomBuilder;
+
+    if (isMovement) {
+      ctx.placedObjects
+        .filter((object) => object.userData.isSpawnPoint && object.visible)
+        .forEach((object) => {
+          object.visible = false;
+          object.userData.hiddenForModeSwitch = true;
+        });
+    } else {
+      ctx.placedObjects
+        .filter((object) => object.userData.isSpawnPoint && object.userData.hiddenForModeSwitch)
+        .forEach((object) => {
+          object.visible = true;
+          delete object.userData.hiddenForModeSwitch;
+        });
+    }
 
     ctx.pressedKeys.clear();
-    if (isEditor) {
+    if (isRoomBuilder) {
+      ctx.applyEditorView('top');
+    } else if (isEditor) {
       ctx.applyEditorView(ctx.editorView);
     } else {
       ctx.resetCharacterMovement();
       ctx.editorLayoutBounds = ctx.computeEditorLayoutBounds();
-      if (ctx.editorLayoutBounds) {
+
+      const spawnPoint = ctx.placedObjects.find(
+        (object) =>
+          object.userData.isSpawnPoint && ctx.getObjectRoomInstanceId(object) === ctx.currentRoomInstanceId,
+      );
+
+      if (spawnPoint) {
+        ctx.character.position.set(spawnPoint.position.x, 0, spawnPoint.position.z);
+        ctx.character.rotation.y = spawnPoint.rotation.y;
+      } else if (ctx.editorLayoutBounds) {
         const centerX = (ctx.editorLayoutBounds.min.x + ctx.editorLayoutBounds.max.x) / 2;
         const centerZ = (ctx.editorLayoutBounds.min.z + ctx.editorLayoutBounds.max.z) / 2;
         const spawn = ctx.findValidSpawnPosition(centerX, centerZ);
@@ -62,7 +98,10 @@ export function initMode(ctx) {
   };
 
   $$('.mode-button').forEach((button) => {
-    button.addEventListener('click', () => ctx.setMode(button.dataset.mode));
+    button.addEventListener('click', () => {
+      if (button.dataset.mode === 'roomBuilder') ctx.startRoomEditor();
+      else ctx.setMode(button.dataset.mode);
+    });
   });
 
   $$('.tool-button[data-transform]').forEach((button) => {
