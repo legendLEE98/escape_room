@@ -1,6 +1,25 @@
 import * as THREE from 'three';
 
-const modelHeadingCorrection = THREE.MathUtils.degToRad(-17);
+const CHARACTER_RADIUS = 0.32;
+const DROP_HEIGHT = 4;
+const GRAVITY_ACCELERATION = 18;
+const IDLE_SQUID_INDEX = 5;
+const WALK_SQUID_INDEX = 1;
+
+function circleIntersectsBox(px, pz, radius, box) {
+  const closestX = THREE.MathUtils.clamp(px, box.min.x, box.max.x);
+  const closestZ = THREE.MathUtils.clamp(pz, box.min.z, box.max.z);
+  const dx = px - closestX;
+  const dz = pz - closestZ;
+  return dx * dx + dz * dz < radius * radius;
+}
+
+function circleIntersectsCircle(px, pz, radius, cx, cz, otherRadius) {
+  const dx = px - cx;
+  const dz = pz - cz;
+  const minDistance = radius + otherRadius;
+  return dx * dx + dz * dz < minDistance * minDistance;
+}
 
 export function initMovement(ctx) {
   ctx.mixer = null;
@@ -9,6 +28,32 @@ export function initMovement(ctx) {
   ctx.isMoving = false;
   ctx.characterSpeed = 2.8;
   ctx.editorLayoutBounds = null;
+  ctx.isFalling = false;
+  let fallVelocity = 0;
+  let currentSquidIndex = -1;
+
+  const characterCollisionRing = new THREE.Mesh(
+    new THREE.RingGeometry(Math.max(CHARACTER_RADIUS - 0.03, 0.01), CHARACTER_RADIUS, 32),
+    new THREE.MeshBasicMaterial({
+      color: '#ff6b6b',
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthTest: false,
+    }),
+  );
+  characterCollisionRing.rotation.x = -Math.PI / 2;
+  characterCollisionRing.renderOrder = 5;
+  characterCollisionRing.visible = false;
+  ctx.scene.add(characterCollisionRing);
+
+  ctx.updateCharacterCollisionDebug = () => {
+    const visible = ctx.currentMode === 'movement';
+    characterCollisionRing.visible = visible;
+    if (visible) {
+      characterCollisionRing.position.set(ctx.character.position.x, 0.03, ctx.character.position.z);
+    }
+  };
 
   const destination = new THREE.Vector3();
   const movementDirection = new THREE.Vector3();
@@ -16,22 +61,30 @@ export function initMovement(ctx) {
   const cameraRight = new THREE.Vector3();
   const keyboardDirection = new THREE.Vector3();
 
+  let characterScale = null;
+
   function centerSelectedSquid(selected) {
     if (!selected || !ctx.loadedModel) return;
     ctx.loadedModel.position.set(0, 0, 0);
+    ctx.character.scale.setScalar(1);
     ctx.loadedModel.updateMatrixWorld(true);
+    ctx.character.updateMatrixWorld(true);
 
     const box = new THREE.Box3().setFromObject(selected);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const localCenter = ctx.character.worldToLocal(center.clone());
 
+    if (characterScale === null) {
+      const largestDimension = Math.max(size.x, size.y, size.z);
+      characterScale = largestDimension > 0 ? 1.35 / largestDimension : 1;
+    }
+
     ctx.loadedModel.position.x -= localCenter.x;
     ctx.loadedModel.position.z -= localCenter.z;
     ctx.loadedModel.position.y -= localCenter.y - size.y / 2;
 
-    const largestDimension = Math.max(size.x, size.y, size.z);
-    if (largestDimension > 0) ctx.character.scale.setScalar(1.35 / largestDimension);
+    ctx.character.scale.setScalar(characterScale);
     ctx.loadedModel.updateMatrixWorld(true);
   }
 
@@ -44,6 +97,31 @@ export function initMovement(ctx) {
     centerSelectedSquid(selected);
   }
 
+  function applySquidPose(moving) {
+    if (!ctx.squidMeshes.length) return;
+    const targetIndex = Math.min(moving ? WALK_SQUID_INDEX : IDLE_SQUID_INDEX, ctx.squidMeshes.length - 1);
+    if (targetIndex === currentSquidIndex) return;
+    currentSquidIndex = targetIndex;
+    showSquid(targetIndex);
+  }
+
+  ctx.startCharacterFall = () => {
+    ctx.character.position.y = DROP_HEIGHT;
+    ctx.isFalling = true;
+    fallVelocity = 0;
+  };
+
+  ctx.updateCharacterGravity = (delta) => {
+    if (ctx.currentMode !== 'movement' || !ctx.isFalling) return;
+    fallVelocity += GRAVITY_ACCELERATION * delta;
+    ctx.character.position.y -= fallVelocity * delta;
+    if (ctx.character.position.y <= 0) {
+      ctx.character.position.y = 0;
+      ctx.isFalling = false;
+      fallVelocity = 0;
+    }
+  };
+
   ctx.computeEditorLayoutBounds = () => {
     if (ctx.placedObjects.length === 0) return null;
     const box = new THREE.Box3();
@@ -54,14 +132,48 @@ export function initMovement(ctx) {
     };
   };
 
+  function isBlockedByPlacedObjects(position) {
+    return ctx.placedObjects.some((object) => {
+      if (!object.userData.blocksMovement) return false;
+      const box = new THREE.Box3().setFromObject(object);
+      if (box.isEmpty()) return false;
+
+      if (object.userData.colliderShape === 'cylinder') {
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const radius = Math.max(size.x, size.z) / 2;
+        return circleIntersectsCircle(position.x, position.z, CHARACTER_RADIUS, center.x, center.z, radius);
+      }
+      return circleIntersectsBox(position.x, position.z, CHARACTER_RADIUS, box);
+    });
+  }
+
   ctx.isInsideActiveMap = (position) => {
     if (!ctx.editorLayoutBounds) return false;
-    return (
+    const insideBounds =
       position.x >= ctx.editorLayoutBounds.min.x &&
       position.x <= ctx.editorLayoutBounds.max.x &&
       position.z >= ctx.editorLayoutBounds.min.z &&
-      position.z <= ctx.editorLayoutBounds.max.z
-    );
+      position.z <= ctx.editorLayoutBounds.max.z;
+    return insideBounds && !isBlockedByPlacedObjects(position);
+  };
+
+  const spawnCandidate = new THREE.Vector3();
+
+  ctx.findValidSpawnPosition = (centerX, centerZ) => {
+    spawnCandidate.set(centerX, 0, centerZ);
+    if (ctx.isInsideActiveMap(spawnCandidate)) return spawnCandidate.clone();
+
+    const maxRadius = 15;
+    for (let radius = 0.5; radius <= maxRadius; radius += 0.5) {
+      const steps = Math.max(8, Math.round(radius * 8));
+      for (let i = 0; i < steps; i += 1) {
+        const angle = (i / steps) * Math.PI * 2;
+        spawnCandidate.set(centerX + Math.cos(angle) * radius, 0, centerZ + Math.sin(angle) * radius);
+        if (ctx.isInsideActiveMap(spawnCandidate)) return spawnCandidate.clone();
+      }
+    }
+    return new THREE.Vector3(centerX, 0, centerZ);
   };
 
   ctx.resetCharacterMovement = () => {
@@ -72,8 +184,7 @@ export function initMovement(ctx) {
   };
 
   function rotateTowardsMovement(delta) {
-    const targetRotation =
-      Math.atan2(movementDirection.x, movementDirection.z) + modelHeadingCorrection;
+    const targetRotation = Math.atan2(movementDirection.x, movementDirection.z);
     const rotationDifference = Math.atan2(
       Math.sin(targetRotation - ctx.character.rotation.y),
       Math.cos(targetRotation - ctx.character.rotation.y),
@@ -82,8 +193,17 @@ export function initMovement(ctx) {
   }
 
   ctx.setDestination = (event) => {
-    if (ctx.currentMode !== 'movement') return;
+    if (ctx.currentMode !== 'movement' || ctx.isFalling) return;
     ctx.setPointer(event);
+
+    const objectHits = ctx.raycaster.intersectObjects(ctx.placedObjects, true);
+    if (objectHits.length) {
+      const object = ctx.findPlacedAncestor(objectHits[0].object);
+      if (object?.userData.interactionType === 'door' && object.userData.blocksMovement) {
+        object.userData.blocksMovement = false;
+        return;
+      }
+    }
 
     const hit = ctx.raycaster.intersectObject(ctx.navigationSurface, false)[0];
     if (!hit || !ctx.isInsideActiveMap(hit.point)) return;
@@ -97,7 +217,7 @@ export function initMovement(ctx) {
   };
 
   function updateKeyboardMovement(delta) {
-    if (ctx.currentMode !== 'movement') return false;
+    if (ctx.currentMode !== 'movement' || ctx.isFalling) return false;
     const horizontal =
       Number(ctx.pressedKeys.has('KeyD')) - Number(ctx.pressedKeys.has('KeyA'));
     const vertical =
@@ -128,7 +248,15 @@ export function initMovement(ctx) {
   }
 
   ctx.updateMovement = (delta) => {
-    if (updateKeyboardMovement(delta) || !ctx.isMoving) return;
+    if (updateKeyboardMovement(delta)) {
+      applySquidPose(true);
+      return;
+    }
+    if (!ctx.isMoving) {
+      applySquidPose(false);
+      return;
+    }
+
     movementDirection.subVectors(destination, ctx.character.position);
     movementDirection.y = 0;
     const remainingDistance = movementDirection.length();
@@ -137,14 +265,24 @@ export function initMovement(ctx) {
       ctx.character.position.copy(destination);
       ctx.isMoving = false;
       ctx.destinationMarker.visible = false;
+      applySquidPose(false);
       return;
     }
 
+    applySquidPose(true);
     movementDirection.normalize();
+    const previousPosition = ctx.character.position.clone();
     ctx.character.position.addScaledVector(
       movementDirection,
       Math.min(ctx.characterSpeed * delta, remainingDistance),
     );
+    if (!ctx.isInsideActiveMap(ctx.character.position)) {
+      ctx.character.position.copy(previousPosition);
+      ctx.isMoving = false;
+      ctx.destinationMarker.visible = false;
+      applySquidPose(false);
+      return;
+    }
     rotateTowardsMovement(delta);
   };
 
@@ -160,33 +298,66 @@ export function initMovement(ctx) {
     );
   };
 
-  ctx.loader.load(
-    '/models/quirky_series_-_free_animals_pack.glb',
-    (gltf) => {
-      ctx.loadedModel = gltf.scene;
-      ctx.loadedModel.traverse((child) => {
-        if (!child.isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        const isSquid = materials.some((material) => material?.name === 'M_Inkfish');
-        child.visible = isSquid;
-        if (isSquid) ctx.squidMeshes.push(child);
-      });
-      ctx.character.add(ctx.loadedModel);
+  const CHARACTER_DIRECTORY = '/models/assets/character/';
+  const FALLBACK_CHARACTER_FILE = 'quirky_series_-_free_animals_pack.glb';
 
-      if (gltf.animations.length) {
-        ctx.mixer = new THREE.AnimationMixer(ctx.loadedModel);
-        gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+  async function resolveCharacterUrl() {
+    try {
+      const response = await fetch(`${CHARACTER_DIRECTORY}character-index.json`, { cache: 'no-store' });
+      if (response.ok) {
+        const data = await response.json();
+        const file = data.files?.[0];
+        if (file) return `${CHARACTER_DIRECTORY}${encodeURIComponent(file)}`;
       }
+    } catch (error) {
+      console.warn('Character index unavailable, falling back to default character.', error);
+    }
+    return `${CHARACTER_DIRECTORY}${encodeURIComponent(FALLBACK_CHARACTER_FILE)}`;
+  }
 
-      if (ctx.squidMeshes.length) showSquid(0);
-    },
-    undefined,
-    (error) => {
-      console.error(error);
-    },
-  );
+  resolveCharacterUrl().then((url) => {
+    ctx.loader.load(
+      url,
+      (gltf) => {
+        ctx.loadedModel = gltf.scene;
+        const meshes = [];
+        ctx.loadedModel.traverse((child) => {
+          if (!child.isMesh) return;
+          child.castShadow = true;
+          child.receiveShadow = true;
+          meshes.push(child);
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          if (materials.some((material) => material?.name === 'M_Inkfish')) {
+            ctx.squidMeshes.push(child);
+          }
+        });
+        // The bundled animal pack has many characters baked into one file and needs
+        // this tag to isolate just the squid meshes. A dedicated single-character
+        // file won't have that tag at all, so fall back to showing everything.
+        if (ctx.squidMeshes.length > 0) {
+          meshes.forEach((mesh) => {
+            mesh.visible = ctx.squidMeshes.includes(mesh);
+          });
+        } else {
+          meshes.forEach((mesh) => {
+            mesh.visible = true;
+          });
+        }
+        ctx.character.add(ctx.loadedModel);
+
+        if (gltf.animations.length) {
+          ctx.mixer = new THREE.AnimationMixer(ctx.loadedModel);
+          gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+        }
+
+        applySquidPose(false);
+      },
+      undefined,
+      (error) => {
+        console.error(error);
+      },
+    );
+  });
 
   ctx.canvas.addEventListener('pointerdown', ctx.setDestination);
 }

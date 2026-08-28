@@ -10,7 +10,21 @@ export function initInspector(ctx) {
   ctx.multiTransformSnapshot = null;
   ctx.suppressNextCanvasClick = false;
 
+  function hasSelectedAncestor(object) {
+    let currentParentId = object.userData.parentInstanceId;
+    const visited = new Set();
+    while (currentParentId != null) {
+      if (ctx.multiSelection.has(currentParentId)) return true;
+      if (visited.has(currentParentId)) break;
+      visited.add(currentParentId);
+      currentParentId = ctx.findByInstanceId(currentParentId)?.userData.parentInstanceId;
+    }
+    return false;
+  }
+
   ctx.updateInspectorFromSelection = () => {
+    ctx.updateInteractionFromSelection();
+
     const count = ctx.multiSelection.size;
     ctx.duplicateButton.disabled = count !== 1;
     ctx.deleteButton.disabled = count === 0;
@@ -43,24 +57,40 @@ export function initInspector(ctx) {
     setSharedNumberField(ctx.inspectorScaleY, selected.map((object) => object.scale.y), 2);
     setSharedNumberField(ctx.inspectorScaleZ, selected.map((object) => object.scale.z), 2);
 
-    ctx.inspectorBgImage.value = '';
-    const bgImageUrl = count === 1 ? ctx.selectedEditorObject.userData.bgImageUrl || '' : '';
-    ctx.inspectorBgPreview.hidden = !bgImageUrl;
-    ctx.inspectorBgPreview.src = bgImageUrl;
+    const allBlock = selected.every((object) => object.userData.blocksMovement);
+    const noneBlock = selected.every((object) => !object.userData.blocksMovement);
+    ctx.inspectorBlocksMovement.checked = allBlock;
+    ctx.inspectorBlocksMovement.indeterminate = !allBlock && !noneBlock;
+
+    const shapes = new Set(selected.map((object) => object.userData.colliderShape));
+    ctx.inspectorColliderShape.value = shapes.size === 1 ? selected[0].userData.colliderShape : 'box';
+
+    const allGravity = selected.every((object) => object.userData.useGravity);
+    const noneGravity = selected.every((object) => !object.userData.useGravity);
+    ctx.inspectorUseGravity.checked = allGravity;
+    ctx.inspectorUseGravity.indeterminate = !allGravity && !noneGravity;
   };
 
   ctx.duplicateSelectedObject = async () => {
     if (!ctx.selectedEditorObject || ctx.multiSelection.size !== 1) return;
-    const asset = ctx.assetCatalog.find(
-      (candidate) => candidate.file === ctx.selectedEditorObject.userData.assetFile,
-    );
-    if (!asset) return;
     const transform = {
       position: ctx.selectedEditorObject.position.clone().add(new THREE.Vector3(0.5, 0, 0.5)).toArray(),
       rotation: ctx.selectedEditorObject.rotation.toArray(),
       scale: ctx.selectedEditorObject.scale.toArray(),
-      roomInstanceId: ctx.selectedEditorObject.userData.roomInstanceId,
+      roomInstanceId: ctx.getObjectRoomInstanceId(ctx.selectedEditorObject),
+      blocksMovement: ctx.selectedEditorObject.userData.blocksMovement,
+      colliderShape: ctx.selectedEditorObject.userData.colliderShape,
+      useGravity: ctx.selectedEditorObject.userData.useGravity,
     };
+
+    if (!ctx.selectedEditorObject.userData.assetFile) {
+      ctx.addEmptyObject(transform);
+      return;
+    }
+    const asset = ctx.assetCatalog.find(
+      (candidate) => candidate.file === ctx.selectedEditorObject.userData.assetFile,
+    );
+    if (!asset) return;
     await ctx.addAsset(asset, transform);
   };
 
@@ -91,7 +121,7 @@ export function initInspector(ctx) {
       if (ctx.multiSelection.size > 1 && ctx.selectedEditorObject) {
         ctx.multiTransformSnapshot = new Map();
         ctx.placedObjects
-          .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+          .filter((object) => ctx.multiSelection.has(object.userData.instanceId) && !hasSelectedAncestor(object))
           .forEach((object) => {
             ctx.multiTransformSnapshot.set(object.userData.instanceId, {
               position: object.position.clone(),
@@ -105,6 +135,8 @@ export function initInspector(ctx) {
     } else {
       ctx.multiTransformSnapshot = null;
       ctx.suppressNextCanvasClick = true;
+      ctx.applyGravityToSelection();
+      ctx.updateInspectorFromSelection();
       ctx.saveLayout();
     }
   });
@@ -121,15 +153,20 @@ export function initInspector(ctx) {
     const number = Number(trimmed);
     if (Number.isNaN(number)) return;
 
-    ctx.placedObjects
-      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
-      .forEach((object) => {
-        if (component === 'rotation') {
-          object.rotation[axis] = THREE.MathUtils.degToRad(number);
-        } else {
-          object[component][axis] = number;
-        }
-      });
+    const targets = ctx.placedObjects.filter((object) => ctx.multiSelection.has(object.userData.instanceId));
+    targets.forEach((object) => {
+      if (component === 'rotation') {
+        object.rotation[axis] = THREE.MathUtils.degToRad(number);
+      } else {
+        object[component][axis] = number;
+      }
+    });
+
+    if (component === 'position' && (axis === 'x' || axis === 'z')) {
+      ctx.applyGravityToSelection();
+      setSharedNumberField(ctx.inspectorPosY, targets.map((object) => object.position.y), 2);
+    }
+
     ctx.saveLayout();
   }
 
@@ -143,18 +180,40 @@ export function initInspector(ctx) {
   ctx.inspectorScaleY.addEventListener('input', (event) => applyInspectorVector('scale', 'y', event.target.value));
   ctx.inspectorScaleZ.addEventListener('input', (event) => applyInspectorVector('scale', 'z', event.target.value));
 
-  ctx.inspectorBgImage.addEventListener('change', () => {
-    if (!ctx.selectedEditorObject) return;
-    const file = ctx.inspectorBgImage.files[0];
-    if (!file) return;
+  ctx.inspectorBlocksMovement.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const checked = event.target.checked;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.blocksMovement = checked;
+      });
+    ctx.saveLayout();
+  });
 
-    const previousUrl = ctx.selectedEditorObject.userData.bgImageUrl;
-    if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+  ctx.inspectorColliderShape.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const shape = event.target.value;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.colliderShape = shape;
+      });
+    ctx.syncSelectionOutlines();
+    ctx.saveLayout();
+  });
 
-    const objectUrl = URL.createObjectURL(file);
-    ctx.selectedEditorObject.userData.bgImageUrl = objectUrl;
-    ctx.inspectorBgPreview.hidden = false;
-    ctx.inspectorBgPreview.src = objectUrl;
+  ctx.inspectorUseGravity.addEventListener('change', (event) => {
+    if (ctx.multiSelection.size === 0) return;
+    const checked = event.target.checked;
+    ctx.placedObjects
+      .filter((object) => ctx.multiSelection.has(object.userData.instanceId))
+      .forEach((object) => {
+        object.userData.useGravity = checked;
+        if (checked) ctx.applyGravityToObject(object);
+      });
+    ctx.updateInspectorFromSelection();
+    ctx.saveLayout();
   });
 
   ctx.deleteButton.addEventListener('click', () => ctx.removeSelectedObjects());

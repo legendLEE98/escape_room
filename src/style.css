@@ -55,13 +55,21 @@ body[data-mode="editor"] #scene {
   position: fixed;
   z-index: 20;
   top: 18px;
-  left: 18px;
+  left: calc(var(--sidebar-width) + 18px);
   right: calc(var(--sidebar-width) + 18px);
   display: flex;
   align-items: center;
   justify-content: space-between;
   pointer-events: none;
-  transition: right 0.18s ease;
+  transition: left 0.18s ease, right 0.18s ease;
+}
+
+body.sidebar-left-collapsed .mode-bar {
+  left: 52px;
+}
+
+body:not([data-mode="editor"]) .mode-bar {
+  left: 18px;
 }
 
 body.sidebar-right-collapsed .mode-bar {
@@ -81,8 +89,29 @@ body.sidebar-right-collapsed .mode-bar {
   backdrop-filter: blur(18px);
 }
 
-body:not([data-mode="editor"]) .view-switch {
-  visibility: hidden;
+.mode-switch[hidden],
+.view-switch[hidden] {
+  display: none;
+}
+
+.view-switch {
+  gap: 0;
+}
+
+.view-switch .tool-button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.view-switch .tool-button:hover {
+  border: 0;
+  background: rgb(255 255 255 / 6%);
+}
+
+.view-switch .tool-button + .tool-button {
+  border-left: 1px solid rgb(255 255 255 / 14%);
 }
 
 .mode-button {
@@ -138,6 +167,18 @@ label {
   color: #cbd4e1;
   font-size: 12px;
   font-weight: 700;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
 }
 
 select,
@@ -272,8 +313,8 @@ kbd {
 
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
   max-height: 320px;
   padding: 4px;
   overflow-y: auto;
@@ -285,8 +326,9 @@ kbd {
 .asset-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px;
   border: 1px solid #2b3748;
   border-radius: 8px;
   background: #0c141f;
@@ -437,7 +479,7 @@ kbd {
 .sidebar-body,
 .asset-grid,
 .hierarchy-list,
-.inspector-panel {
+.right-tab-panel {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -445,15 +487,15 @@ kbd {
 .sidebar-body::-webkit-scrollbar,
 .asset-grid::-webkit-scrollbar,
 .hierarchy-list::-webkit-scrollbar,
-.inspector-panel::-webkit-scrollbar {
+.right-tab-panel::-webkit-scrollbar {
   display: none;
 }
 
 .sidebar-body {
   width: 100%;
   height: 100%;
-  padding: 90px 16px 20px;
-  overflow: auto;
+  padding: 20px 16px;
+  overflow: hidden;
 }
 
 .sidebar-right-body {
@@ -464,111 +506,117 @@ kbd {
   overflow: hidden;
 }
 
-.hierarchy-panel {
+.right-tabs {
   display: flex;
-  flex: 1 1 45%;
-  flex-direction: column;
-  min-height: 0;
+  flex: none;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px;
+  border: 1px solid #2b3748;
+  border-radius: 10px;
+  background: #111925;
 }
 
-.inspector-panel {
+.right-tab {
+  flex: 1;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 7px;
+  color: #8d9aac;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.right-tab:hover {
+  color: #dce6f4;
+  background: rgb(255 255 255 / 6%);
+}
+
+.right-tab.is-active {
+  color: #07111d;
+  background: #8fc5ff;
+}
+
+.right-tab-panel {
   display: flex;
-  flex: 1 1 55%;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: auto;
 }
 
-.sidebar-divider-h {
-  flex: none;
-  height: 1px;
-  margin: 14px 0;
-  background: rgb(255 255 255 / 8%);
+.right-tab-panel[hidden] {
+  display: none;
+}
+
+.right-tab-panel[data-tab-panel="objects"] {
+  overflow: hidden;
+  border: 1px solid #2b3748;
+  border-radius: 9px;
+  background: #111925;
 }
 
 .hierarchy-list {
   flex: 1;
   min-height: 0;
-  margin: 9px 0 0;
-  padding: 4px;
+  margin: 0;
+  padding: 8px;
   overflow-y: auto;
-  border: 1px solid #2b3748;
-  border-radius: 9px;
-  background: #111925;
   list-style: none;
 }
 
-.hierarchy-room-header {
+.hierarchy-object {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 8px;
-  padding: 7px 9px 7px 5px;
-  border-left: 3px solid transparent;
-  border-radius: 6px;
-  color: #78ade7;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  text-transform: uppercase;
-}
-
-.hierarchy-room-header:first-child {
-  margin-top: 0;
-}
-
-.hierarchy-room-header:hover {
-  background: rgb(255 255 255 / 5%);
-}
-
-.hierarchy-room-header.is-current-room {
-  border-left-color: #78ade7;
-  color: #9dcdff;
-}
-
-.hierarchy-room-header::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.hierarchy-room-header.is-current-room::before {
-  background: #78ade7;
-}
-
-.hierarchy-room-header-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hierarchy-room-delete {
-  flex: none;
-  padding: 2px 7px;
-  border: 0;
-  border-radius: 5px;
-  color: #67768a;
-  background: transparent;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.hierarchy-room-delete:hover {
-  color: #ff9b9b;
-  background: rgb(255 155 155 / 12%);
-}
-
-.hierarchy-object {
+  gap: 5px;
   padding: 8px 9px 8px 18px;
   border-radius: 6px;
   color: #cbd4e1;
   font-size: 12px;
   cursor: pointer;
+}
+
+.hierarchy-object-visibility {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #67768a;
+  cursor: pointer;
+}
+
+.hierarchy-object-visibility:hover {
+  color: #9dcdff;
+}
+
+.hierarchy-object.is-hidden .hierarchy-object-label {
+  color: #4d5768;
+}
+
+.hierarchy-object-toggle {
+  display: flex;
+  flex: none;
+  width: 14px;
+  align-items: center;
+  justify-content: center;
+  color: #67768a;
+  font-size: 9px;
+}
+
+.hierarchy-object-toggle:not(.is-empty):hover {
+  color: #9dcdff;
+}
+
+.hierarchy-object-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hierarchy-object:hover {
@@ -580,28 +628,118 @@ kbd {
   background: #16263a;
 }
 
-.hierarchy-add-room {
-  margin-top: 8px;
+.hierarchy-object[draggable="true"] {
+  cursor: grab;
 }
 
-.hierarchy-add-room-button {
+.hierarchy-object.drag-over-inside {
+  outline: 1px dashed #78ade7;
+  outline-offset: -1px;
+  background: rgb(120 173 231 / 12%);
+}
+
+.hierarchy-object.drag-over-before {
+  box-shadow: inset 0 2px 0 0 #78ade7;
+}
+
+.hierarchy-object.drag-over-after {
+  box-shadow: inset 0 -2px 0 0 #78ade7;
+}
+
+.hierarchy-header {
   display: flex;
-  width: 100%;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 8px;
+  border-bottom: 1px solid #2b3748;
+}
+
+.hierarchy-header.is-drag-over {
+  outline: 1px dashed #78ade7;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.hierarchy-room-select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #2b3748;
+  border-radius: 6px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hierarchy-room-rename-input {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  padding: 5px 6px;
+  border: 1px solid #78ade7;
+  border-radius: 6px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hierarchy-room-icon-button {
+  display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  padding: 10px;
-  border: 1px dashed #2b3748;
-  border-radius: 8px;
-  background: transparent;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   color: #67768a;
-  font-size: 15px;
-  font-weight: 700;
+  background: transparent;
   cursor: pointer;
 }
 
-.hierarchy-add-room-button:hover {
-  border-color: #53667f;
+.hierarchy-room-icon-button:hover {
   color: #9dcdff;
+  background: rgb(255 255 255 / 6%);
+}
+
+.hierarchy-footer {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid #2b3748;
+}
+
+.hierarchy-toolbar-icon {
+  display: flex;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px dashed #2b3748;
+  border-radius: 6px;
+  color: #8d9aac;
+  background: transparent;
+  cursor: pointer;
+}
+
+.hierarchy-toolbar-icon:hover {
+  border-color: #53667f;
+  border-style: solid;
+  color: #9dcdff;
+  background: rgb(255 255 255 / 5%);
+}
+
+.hierarchy-toolbar-icon svg {
+  width: 15px;
+  height: 15px;
 }
 
 .vector-row {
@@ -672,6 +810,99 @@ kbd {
   font-size: 10px;
   backdrop-filter: blur(14px);
   transform: translateX(-50%);
+}
+
+.room-builder-name-panel {
+  position: fixed;
+  z-index: 12;
+  top: 84px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 200px;
+  padding: 14px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  color: #dce6f4;
+  background: rgb(8 12 18 / 92%);
+  backdrop-filter: blur(14px);
+}
+
+.room-builder-name-panel[hidden] {
+  display: none;
+}
+
+.room-builder-name-panel label {
+  color: #8d9aac;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.room-builder-name-panel input[type="text"] {
+  padding: 8px 10px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  background: #0d1520;
+  color: #dce6f4;
+  font-size: 12px;
+}
+
+.room-builder-panel {
+  position: fixed;
+  z-index: 12;
+  bottom: 24px;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 12px;
+  color: #dce6f4;
+  background: rgb(8 12 18 / 92%);
+  backdrop-filter: blur(14px);
+  transform: translateX(-50%);
+}
+
+.room-builder-panel[hidden] {
+  display: none;
+}
+
+.room-builder-status {
+  margin: 0;
+  color: #8fc5ff;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.room-builder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.room-builder-actions button {
+  flex: 1;
+  min-width: 96px;
+  padding: 9px 18px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  color: #8d9aac;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.room-builder-actions button:hover {
+  color: #dce6f4;
+  background: rgb(255 255 255 / 6%);
+}
+
+.room-builder-actions .primary-button {
+  width: auto;
+  margin-top: 0;
 }
 
 .back-button {
@@ -898,4 +1129,33 @@ kbd {
   .editor-hint {
     display: none;
   }
+}
+
+.hierarchy-context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  background: #131c29;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.hierarchy-context-menu-item {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: #cbd4e1;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hierarchy-context-menu-item:hover {
+  color: #9dcdff;
+  background: rgb(255 255 255 / 6%);
 }

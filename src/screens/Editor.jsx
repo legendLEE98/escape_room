@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createScene } from './editor/index.js';
+import { createScene } from '../editor/index.js';
 
 export default function Editor({ mapId, onBack }) {
   const canvasRef = useRef(null);
@@ -19,17 +19,20 @@ export default function Editor({ mapId, onBack }) {
           <button className="mode-button is-active" data-mode="editor">
             에디터 모드
           </button>
+          <button className="mode-button" data-mode="roomBuilder">
+            방 수정
+          </button>
           <button className="mode-button" data-mode="movement">
             움직임 테스트
           </button>
         </nav>
 
         <nav className="view-switch" aria-label="카메라 보기 전환">
-          <button className="tool-button is-active" data-view="isometric">
-            아이소메트릭
+          <button className="tool-button" data-view="isometric">
+            아이소메트릭 뷰
           </button>
           <button className="tool-button" data-view="top">
-            탑뷰
+            탑 뷰
           </button>
         </nav>
       </header>
@@ -85,20 +88,56 @@ export default function Editor({ mapId, onBack }) {
           <span className="sidebar-toggle-icon">›</span>
         </button>
         <div className="sidebar-body sidebar-right-body">
-          <section className="hierarchy-panel">
-            <div className="sidebar-heading">
-              <p className="eyebrow">HIERARCHY</p>
+          <nav className="right-tabs" aria-label="사이드바 탭">
+            <button type="button" className="right-tab is-active" data-tab="objects">
+              오브젝트
+            </button>
+            <button type="button" className="right-tab" data-tab="properties">
+              속성
+            </button>
+            <button type="button" className="right-tab" data-tab="interaction">
+              상호작용
+            </button>
+          </nav>
+
+          <section className="right-tab-panel" data-tab-panel="objects">
+            <div id="hierarchy-header" className="hierarchy-header">
+              <select id="hierarchy-room-select" className="hierarchy-room-select" aria-label="현재 방 선택" />
+              <button
+                type="button"
+                id="hierarchy-room-rename"
+                className="hierarchy-room-icon-button"
+                aria-label="방 이름 변경"
+                title="방 이름 변경"
+              />
+              <button
+                type="button"
+                id="hierarchy-room-delete"
+                className="hierarchy-room-icon-button"
+                aria-label="방 삭제"
+                title="방 삭제"
+              />
             </div>
             <ul id="hierarchy-list" className="hierarchy-list" aria-label="배치된 객체 목록" />
+            <div id="hierarchy-footer" className="hierarchy-footer">
+              <button
+                type="button"
+                id="add-room"
+                className="hierarchy-toolbar-icon"
+                aria-label="방 추가"
+                title="새 방 추가"
+              />
+              <button
+                type="button"
+                id="add-empty-object"
+                className="hierarchy-toolbar-icon"
+                aria-label="빈 오브젝트 추가"
+                title="빈 오브젝트 추가"
+              />
+            </div>
           </section>
 
-          <div className="sidebar-divider-h" />
-
-          <section className="inspector-panel">
-            <div className="sidebar-heading">
-              <p className="eyebrow">INSPECTOR</p>
-            </div>
-
+          <section className="right-tab-panel" data-tab-panel="properties" hidden>
             <p id="inspector-empty" className="help">
               오브젝트를 선택하면 속성이 여기에 표시됩니다.
             </p>
@@ -164,9 +203,21 @@ export default function Editor({ mapId, onBack }) {
                 </div>
               </div>
 
-              <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
-              <input id="inspector-bg-image" type="file" accept="image/*" />
-              <img id="inspector-bg-preview" alt="" hidden />
+              <label className="checkbox-row" htmlFor="inspector-blocks-movement">
+                <input id="inspector-blocks-movement" type="checkbox" />
+                이동 차단 (캐릭터가 못 지나감)
+              </label>
+
+              <label htmlFor="inspector-collider-shape">충돌 모양</label>
+              <select id="inspector-collider-shape">
+                <option value="box">상자</option>
+                <option value="cylinder">원기둥</option>
+              </select>
+
+              <label className="checkbox-row" htmlFor="inspector-use-gravity">
+                <input id="inspector-use-gravity" type="checkbox" />
+                중력 적용 (바닥/다른 오브젝트 위에 자동으로 놓기)
+              </label>
             </div>
 
             <div className="action-grid">
@@ -178,6 +229,29 @@ export default function Editor({ mapId, onBack }) {
               </button>
             </div>
           </section>
+
+          <section className="right-tab-panel" data-tab-panel="interaction" hidden>
+            <p id="interaction-empty" className="help">
+              오브젝트를 선택하면 상호작용 설정이 여기에 표시됩니다.
+            </p>
+
+            <div id="interaction-body" hidden>
+              <label htmlFor="interaction-type">상호작용 종류</label>
+              <select id="interaction-type">
+                <option value="none">없음</option>
+                <option value="door">문 (다른 방으로 연결)</option>
+              </select>
+
+              <div id="interaction-door-fields" hidden>
+                <label htmlFor="interaction-connected-room">연결할 방</label>
+                <select id="interaction-connected-room" />
+              </div>
+
+              <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
+              <input id="inspector-bg-image" type="file" accept="image/*" />
+              <img id="inspector-bg-preview" alt="" hidden />
+            </div>
+          </section>
         </div>
       </aside>
 
@@ -186,6 +260,25 @@ export default function Editor({ mapId, onBack }) {
         <span>우클릭 드래그: 카메라 회전</span>
         <span>휠: 확대</span>
         <span>WASD: 카메라 이동</span>
+      </div>
+
+      <div id="room-builder-name-panel" className="room-builder-name-panel" hidden>
+        <label htmlFor="room-builder-name">방 이름</label>
+        <input id="room-builder-name" type="text" />
+      </div>
+
+      <div id="room-builder-panel" className="room-builder-panel" hidden>
+        <p id="room-builder-status" className="room-builder-status" hidden>
+          탑뷰에서 드래그해서 바닥 사각형을 그려주세요.
+        </p>
+        <div className="room-builder-actions">
+          <button type="button" id="room-builder-cancel">
+            취소
+          </button>
+          <button type="button" id="room-builder-finish" className="primary-button" disabled>
+            적용
+          </button>
+        </div>
       </div>
     </>
   );

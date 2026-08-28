@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { listMaps, createMap, updateMapMeta } from './maps.js';
+import { listMaps, createMap, updateMapMeta } from '../data/maps.js';
 
 function MapMetaModal({ map, onCancel, onSave }) {
   const [title, setTitle] = useState(map.title);

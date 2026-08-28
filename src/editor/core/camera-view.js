@@ -14,7 +14,7 @@ export function initCameraView(ctx) {
 
   ctx.updateCameraProjection = () => {
     const aspect = window.innerWidth / window.innerHeight;
-    const viewHeight = ctx.currentMode === 'editor' ? 16 : 10;
+    const viewHeight = ctx.currentMode === 'editor' || ctx.currentMode === 'roomBuilder' ? 16 : 10;
     ctx.camera.left = (-viewHeight * aspect) / 2;
     ctx.camera.right = (viewHeight * aspect) / 2;
     ctx.camera.top = viewHeight / 2;
@@ -26,24 +26,19 @@ export function initCameraView(ctx) {
 
   ctx.applyEditorView = (view) => {
     ctx.editorView = view;
-    $$('.tool-button[data-view]').forEach((button) => {
-      button.classList.toggle('is-active', button.dataset.view === view);
-    });
     if (view === 'top') {
       ctx.camera.position.copy(topCameraPosition);
       ctx.orbitControls.target.set(0, 0, 0);
-      ctx.orbitControls.enableRotate = false;
     } else {
       ctx.camera.position.copy(isometricCameraPosition);
       ctx.orbitControls.target.set(0, 0.8, 0);
-      ctx.orbitControls.enableRotate = true;
     }
     ctx.orbitControls.update();
     ctx.updateCameraProjection();
   };
 
   ctx.updateEditorCameraMovement = (delta) => {
-    if (ctx.currentMode !== 'editor') return;
+    if (ctx.currentMode !== 'editor' && ctx.currentMode !== 'roomBuilder') return;
     const horizontal =
       Number(ctx.pressedKeys.has('KeyD')) - Number(ctx.pressedKeys.has('KeyA'));
     const vertical =
@@ -52,6 +47,13 @@ export function initCameraView(ctx) {
 
     ctx.camera.getWorldDirection(editorCameraForward);
     editorCameraForward.y = 0;
+    if (editorCameraForward.lengthSq() < 1e-6) {
+      // Looking straight down (top view): the forward vector degenerates to ~0 on the
+      // ground plane, so derive "screen up" from the camera's actual up axis instead of
+      // a fixed world constant — otherwise WASD ignores the camera's real orientation.
+      editorCameraForward.setFromMatrixColumn(ctx.camera.matrixWorld, 1);
+      editorCameraForward.y = 0;
+    }
     if (editorCameraForward.lengthSq() < 1e-6) editorCameraForward.set(0, 0, -1);
     editorCameraForward.normalize();
     editorCameraRight.crossVectors(editorCameraForward, ctx.camera.up).normalize();
