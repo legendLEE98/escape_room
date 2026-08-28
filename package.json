@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-static": "^1.34.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "three": "^0.179.1"

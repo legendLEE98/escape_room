@@ -6,7 +6,7 @@ export function initRooms(ctx) {
   ctx.currentRoomInstanceId = null;
 
   function createRoom(name, isStartRoom) {
-    const room = { instanceId: ctx.nextRoomInstanceId++, name, isStartRoom };
+    const room = { instanceId: ctx.nextRoomInstanceId++, name, isStartRoom, _loaded: true };
     room.root = new THREE.Group();
     room.root.name = name;
     room.root.userData.isRoomRoot = true;
@@ -39,15 +39,6 @@ export function initRooms(ctx) {
     ctx.rooms.push(room);
     ctx.currentRoomInstanceId = room.instanceId;
     ctx.applyRoomVisibility();
-  };
-
-  ctx.addRoom = () => {
-    const room = createRoom(`방${ctx.rooms.length + 1}`, ctx.rooms.length === 0);
-    ctx.rooms.push(room);
-    ctx.currentRoomInstanceId = room.instanceId;
-    ctx.applyRoomVisibility();
-    ctx.syncHierarchy();
-    ctx.saveLayout();
   };
 
   ctx.deleteRoom = (room) => {
@@ -91,11 +82,18 @@ export function initRooms(ctx) {
     ctx.editorStatus.textContent = `"${room.name}" 방과 오브젝트 ${targets.length}개를 삭제했습니다.`;
   };
 
-  ctx.selectRoom = (room) => {
+  ctx.selectRoom = async (room) => {
     ctx.multiSelection.clear();
     ctx.selectedEditorObject = null;
     ctx.transformControls.detach();
     ctx.currentRoomInstanceId = room.instanceId;
+
+    if (!room._loaded) {
+      ctx.editorStatus.textContent = `"${room.name}" 방을 불러오는 중...`;
+      await ctx.loadRoomContents(room);
+      ctx.editorStatus.textContent = `"${room.name}" 방을 불러왔습니다.`;
+    }
+
     ctx.applyRoomVisibility();
     ctx.updateInspectorFromSelection();
     ctx.syncHierarchy();

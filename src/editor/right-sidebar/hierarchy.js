@@ -1,11 +1,10 @@
+import ADD_ROOM_ICON from 'lucide-static/icons/towel-rack.svg?raw';
+import ADD_EMPTY_OBJECT_ICON from 'lucide-static/icons/scan-box.svg?raw';
+
 const EYE_ICON =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_ICON =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.8 21.8 0 0 1 5.06-6.06M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.8 21.8 0 0 1-3.22 4.36M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-const ADD_ROOM_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>';
-const ADD_EMPTY_OBJECT_ICON =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>';
 const RENAME_ICON =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7 21l-4 1 1-4z"/></svg>';
 const DELETE_ICON =
@@ -227,118 +226,86 @@ export function initHierarchy(ctx) {
     ctx.editorStatus.textContent = `선택한 객체 ${targets.length}개를 삭제했습니다.`;
   };
 
-  function buildToolbar() {
-    const toolbar = document.createElement('li');
-    toolbar.className = 'hierarchy-toolbar';
-    toolbar.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      toolbar.classList.add('is-drag-over');
-    });
-    toolbar.addEventListener('dragleave', () => toolbar.classList.remove('is-drag-over'));
-    toolbar.addEventListener('drop', (event) => {
-      event.preventDefault();
-      toolbar.classList.remove('is-drag-over');
-      reparentByDrag(event, null);
-    });
-
-    const roomGroup = document.createElement('div');
-    roomGroup.className = 'hierarchy-toolbar-room';
-    roomGroup.classList.add('hierarchy-toolbar-row');
-
-    const roomSelect = document.createElement('select');
-    roomSelect.className = 'hierarchy-room-select';
+  function renderRoomSelect() {
+    ctx.hierarchyRoomSelect.innerHTML = '';
     ctx.rooms.forEach((room) => {
       const option = document.createElement('option');
       option.value = String(room.instanceId);
       option.textContent = room.name;
-      roomSelect.append(option);
+      ctx.hierarchyRoomSelect.append(option);
     });
-    roomSelect.value = String(ctx.currentRoomInstanceId);
-    roomSelect.addEventListener('change', () => {
-      const room = ctx.rooms.find((candidate) => candidate.instanceId === Number(roomSelect.value));
-      if (room) ctx.selectRoom(room);
-    });
-    roomGroup.append(roomSelect);
-
-    const renameButton = document.createElement('button');
-    renameButton.type = 'button';
-    renameButton.className = 'hierarchy-room-icon-button';
-    renameButton.innerHTML = RENAME_ICON;
-    renameButton.setAttribute('aria-label', '방 이름 변경');
-    renameButton.addEventListener('click', () => {
-      const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
-      if (!room) return;
-
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'hierarchy-room-rename-input';
-      input.value = room.name;
-      roomSelect.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const commit = () => {
-        const nextName = input.value.trim();
-        if (nextName) {
-          room.name = nextName;
-          room.root.name = nextName;
-        }
-        ctx.syncHierarchy();
-        ctx.saveLayout();
-      };
-
-      input.addEventListener('keydown', (event) => {
-        if (event.code === 'Enter') input.blur();
-        if (event.code === 'Escape') {
-          input.removeEventListener('blur', commit);
-          ctx.syncHierarchy();
-        }
-      });
-      input.addEventListener('blur', commit, { once: true });
-    });
-    roomGroup.append(renameButton);
-
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'hierarchy-room-icon-button';
-    deleteButton.innerHTML = DELETE_ICON;
-    deleteButton.setAttribute('aria-label', '방 삭제');
-    deleteButton.addEventListener('click', () => {
-      const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
-      if (room) ctx.deleteRoom(room);
-    });
-    roomGroup.append(deleteButton);
-
-    toolbar.append(roomGroup);
-
-    const actionGroup = document.createElement('div');
-    actionGroup.className = 'hierarchy-toolbar-actions hierarchy-toolbar-row';
-
-    const addRoomButton = document.createElement('button');
-    addRoomButton.type = 'button';
-    addRoomButton.className = 'hierarchy-toolbar-icon';
-    addRoomButton.innerHTML = ADD_ROOM_ICON;
-    addRoomButton.setAttribute('aria-label', '방 추가');
-    addRoomButton.addEventListener('click', ctx.addRoom);
-    actionGroup.append(addRoomButton);
-
-    const addEmptyObjectButton = document.createElement('button');
-    addEmptyObjectButton.type = 'button';
-    addEmptyObjectButton.className = 'hierarchy-toolbar-icon';
-    addEmptyObjectButton.innerHTML = ADD_EMPTY_OBJECT_ICON;
-    addEmptyObjectButton.setAttribute('aria-label', '빈 오브젝트 추가');
-    addEmptyObjectButton.addEventListener('click', () => ctx.addEmptyObject());
-    actionGroup.append(addEmptyObjectButton);
-
-    toolbar.append(actionGroup);
-
-    return toolbar;
+    ctx.hierarchyRoomSelect.value = String(ctx.currentRoomInstanceId);
   }
 
+  ctx.hierarchyHeader.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    ctx.hierarchyHeader.classList.add('is-drag-over');
+  });
+  ctx.hierarchyHeader.addEventListener('dragleave', () => ctx.hierarchyHeader.classList.remove('is-drag-over'));
+  ctx.hierarchyHeader.addEventListener('drop', (event) => {
+    event.preventDefault();
+    ctx.hierarchyHeader.classList.remove('is-drag-over');
+    reparentByDrag(event, null);
+  });
+
+  ctx.hierarchyRoomSelect.addEventListener('change', () => {
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === Number(ctx.hierarchyRoomSelect.value));
+    if (room) ctx.selectRoom(room);
+  });
+
+  ctx.hierarchyRoomRename.innerHTML = RENAME_ICON;
+  ctx.hierarchyRoomRename.addEventListener('click', () => {
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    if (!room) return;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'hierarchy-room-rename-input';
+    input.value = room.name;
+    ctx.hierarchyRoomSelect.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const restoreSelect = () => {
+      input.replaceWith(ctx.hierarchyRoomSelect);
+      renderRoomSelect();
+    };
+
+    const commit = () => {
+      const nextName = input.value.trim();
+      if (nextName) {
+        room.name = nextName;
+        room.root.name = nextName;
+      }
+      restoreSelect();
+      ctx.saveLayout();
+    };
+
+    input.addEventListener('keydown', (event) => {
+      if (event.code === 'Enter') input.blur();
+      if (event.code === 'Escape') {
+        input.removeEventListener('blur', commit);
+        restoreSelect();
+      }
+    });
+    input.addEventListener('blur', commit, { once: true });
+  });
+
+  ctx.hierarchyRoomDelete.innerHTML = DELETE_ICON;
+  ctx.hierarchyRoomDelete.addEventListener('click', () => {
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    if (room) ctx.deleteRoom(room);
+  });
+
+  ctx.addRoomButton.innerHTML = ADD_ROOM_ICON;
+  ctx.addRoomButton.addEventListener('click', ctx.startRoomBuilder);
+  ctx.addEmptyObjectButton.innerHTML = ADD_EMPTY_OBJECT_ICON;
+  ctx.addEmptyObjectButton.addEventListener('click', () => ctx.addEmptyObject());
+
   ctx.syncHierarchy = () => {
+    renderRoomSelect();
     ctx.hierarchyList.innerHTML = '';
-    ctx.hierarchyList.append(buildToolbar());
 
     const currentRoom = ctx.rooms.find((room) => room.instanceId === ctx.currentRoomInstanceId);
     if (!currentRoom) return;
@@ -377,6 +344,7 @@ export function initHierarchy(ctx) {
       visibilityToggle.type = 'button';
       visibilityToggle.className = 'hierarchy-object-visibility';
       visibilityToggle.setAttribute('aria-label', object.visible ? '숨기기' : '보이기');
+      visibilityToggle.title = object.visible ? '씬에서 숨기기' : '씬에서 다시 보이기';
       visibilityToggle.innerHTML = object.visible ? EYE_ICON : EYE_OFF_ICON;
       visibilityToggle.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -389,6 +357,7 @@ export function initHierarchy(ctx) {
       toggle.className = 'hierarchy-object-toggle';
       if (children.length > 0) {
         toggle.textContent = isCollapsed ? '▶' : '▼';
+        toggle.title = isCollapsed ? '하위 오브젝트 펼치기' : '하위 오브젝트 접기';
         toggle.addEventListener('click', (event) => {
           event.stopPropagation();
           if (isCollapsed) ctx.collapsedInstanceIds.delete(object.userData.instanceId);
@@ -499,7 +468,7 @@ export function initHierarchy(ctx) {
     menu.style.top = `${event.clientY}px`;
     menu.append(
       buildContextMenuItem('빈 오브젝트 추가', () => ctx.addEmptyObject()),
-      buildContextMenuItem('방 추가', ctx.addRoom),
+      buildContextMenuItem('방 추가', ctx.startRoomBuilder),
       buildContextMenuItem('스폰 위치 추가', () => ctx.addSpawnPoint()),
     );
     document.body.append(menu);

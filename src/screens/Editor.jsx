@@ -19,17 +19,20 @@ export default function Editor({ mapId, onBack }) {
           <button className="mode-button is-active" data-mode="editor">
             에디터 모드
           </button>
+          <button className="mode-button" data-mode="roomBuilder">
+            방 수정
+          </button>
           <button className="mode-button" data-mode="movement">
             움직임 테스트
           </button>
         </nav>
 
         <nav className="view-switch" aria-label="카메라 보기 전환">
-          <button className="tool-button is-active" data-view="isometric">
-            아이소메트릭
+          <button className="tool-button" data-view="isometric">
+            아이소메트릭 뷰
           </button>
           <button className="tool-button" data-view="top">
-            탑뷰
+            탑 뷰
           </button>
         </nav>
       </header>
@@ -98,7 +101,40 @@ export default function Editor({ mapId, onBack }) {
           </nav>
 
           <section className="right-tab-panel" data-tab-panel="objects">
+            <div id="hierarchy-header" className="hierarchy-header">
+              <select id="hierarchy-room-select" className="hierarchy-room-select" aria-label="현재 방 선택" />
+              <button
+                type="button"
+                id="hierarchy-room-rename"
+                className="hierarchy-room-icon-button"
+                aria-label="방 이름 변경"
+                title="방 이름 변경"
+              />
+              <button
+                type="button"
+                id="hierarchy-room-delete"
+                className="hierarchy-room-icon-button"
+                aria-label="방 삭제"
+                title="방 삭제"
+              />
+            </div>
             <ul id="hierarchy-list" className="hierarchy-list" aria-label="배치된 객체 목록" />
+            <div id="hierarchy-footer" className="hierarchy-footer">
+              <button
+                type="button"
+                id="add-room"
+                className="hierarchy-toolbar-icon"
+                aria-label="방 추가"
+                title="새 방 추가"
+              />
+              <button
+                type="button"
+                id="add-empty-object"
+                className="hierarchy-toolbar-icon"
+                aria-label="빈 오브젝트 추가"
+                title="빈 오브젝트 추가"
+              />
+            </div>
           </section>
 
           <section className="right-tab-panel" data-tab-panel="properties" hidden>
@@ -224,6 +260,25 @@ export default function Editor({ mapId, onBack }) {
         <span>우클릭 드래그: 카메라 회전</span>
         <span>휠: 확대</span>
         <span>WASD: 카메라 이동</span>
+      </div>
+
+      <div id="room-builder-name-panel" className="room-builder-name-panel" hidden>
+        <label htmlFor="room-builder-name">방 이름</label>
+        <input id="room-builder-name" type="text" />
+      </div>
+
+      <div id="room-builder-panel" className="room-builder-panel" hidden>
+        <p id="room-builder-status" className="room-builder-status" hidden>
+          탑뷰에서 드래그해서 바닥 사각형을 그려주세요.
+        </p>
+        <div className="room-builder-actions">
+          <button type="button" id="room-builder-cancel">
+            취소
+          </button>
+          <button type="button" id="room-builder-finish" className="primary-button" disabled>
+            적용
+          </button>
+        </div>
       </div>
     </>
   );

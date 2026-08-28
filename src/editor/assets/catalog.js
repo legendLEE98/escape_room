@@ -62,7 +62,7 @@ export function initAssetCatalog(ctx) {
           file: record.file,
           label: record.root || labelFromFilename(record.file),
           collection: record.collection || '',
-          url: `/models/assets/${encodeURIComponent(record.file)}`,
+          url: `/models/assets/${record.file.split('/').map(encodeURIComponent).join('/')}`,
         }));
         ctx.assetCatalog.sort((left, right) =>
           left.label.localeCompare(right.label, 'ko', { numeric: true }),
