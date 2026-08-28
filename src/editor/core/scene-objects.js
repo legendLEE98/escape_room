@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
@@ -21,6 +22,7 @@ export function buildSceneObjects(canvas) {
   const cameraTarget = new THREE.Vector3();
   const clock = new THREE.Clock();
   const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
 
   scene.add(new THREE.HemisphereLight('#c9dcff', '#172033', 2.2));
 
