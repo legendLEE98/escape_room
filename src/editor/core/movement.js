@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const CHARACTER_RADIUS = 0.32;
+const INTERACTION_RADIUS = 1.5;
 const DROP_HEIGHT = 4;
 const GRAVITY_ACCELERATION = 18;
 const IDLE_SQUID_INDEX = 5;
@@ -34,6 +35,14 @@ export function initMovement(ctx) {
   let idleAction = null;
   let runAction = null;
   let isAnimatingRun = null;
+
+  // 3-step play-test camera zoom, same isometric angle throughout — each
+  // step just zooms the character in closer regardless of facing direction.
+  const MOVEMENT_CAMERA_ZOOM_LEVELS = [1, 1.7, 2.6];
+  let movementCameraZoomLevel = 0;
+  ctx.resetMovementCameraZoom = () => {
+    movementCameraZoomLevel = 0;
+  };
   const ANIMATION_CROSSFADE_SECONDS = 0.25;
 
   const characterCollisionRing = new THREE.Mesh(
@@ -51,11 +60,28 @@ export function initMovement(ctx) {
   characterCollisionRing.visible = false;
   ctx.scene.add(characterCollisionRing);
 
+  const interactionRangeRing = new THREE.Mesh(
+    new THREE.RingGeometry(Math.max(INTERACTION_RADIUS - 0.03, 0.01), INTERACTION_RADIUS, 48),
+    new THREE.MeshBasicMaterial({
+      color: '#8fc5ff',
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide,
+      depthTest: false,
+    }),
+  );
+  interactionRangeRing.rotation.x = -Math.PI / 2;
+  interactionRangeRing.renderOrder = 4;
+  interactionRangeRing.visible = false;
+  ctx.scene.add(interactionRangeRing);
+
   ctx.updateCharacterCollisionDebug = () => {
     const visible = ctx.currentMode === 'movement';
     characterCollisionRing.visible = visible;
+    interactionRangeRing.visible = visible;
     if (visible) {
       characterCollisionRing.position.set(ctx.character.position.x, 0.03, ctx.character.position.z);
+      interactionRangeRing.position.set(ctx.character.position.x, 0.025, ctx.character.position.z);
     }
   };
 
@@ -81,7 +107,7 @@ export function initMovement(ctx) {
 
     if (characterScale === null) {
       const largestDimension = Math.max(size.x, size.y, size.z);
-      characterScale = largestDimension > 0 ? 1.35 / largestDimension : 1;
+      characterScale = largestDimension > 0 ? 1 / largestDimension : 1;
     }
 
     ctx.loadedModel.position.x -= localCenter.x;
@@ -216,11 +242,10 @@ export function initMovement(ctx) {
     ctx.destinationMarker.visible = false;
   };
 
-  // sparrow.glb's authored forward axis doesn't match the +Z assumption below —
-  // this constant corrects the mismatch. Measured directly from the GLB's
-  // bind-pose bone positions (body->tail and wing.L/wing.R symmetry axis
-  // independently agree to 0.001deg): local forward sits at -56.0976deg off +Z.
-  const CHARACTER_FACING_OFFSET = (56.09761797820096 * Math.PI) / 180;
+  // sparrow.glb's forward axis is correctly aligned to +Z in this export
+  // (verified from the GLB's bind-pose wing/feet symmetry axes: 0.00deg off),
+  // so no correction is needed.
+  const CHARACTER_FACING_OFFSET = 0;
 
   function rotateTowardsMovement(delta) {
     const targetRotation = Math.atan2(movementDirection.x, movementDirection.z) + CHARACTER_FACING_OFFSET;
@@ -327,15 +352,34 @@ export function initMovement(ctx) {
 
   ctx.updateQuarterView = (delta) => {
     if (ctx.currentMode !== 'movement') return;
+    const targetZoom = MOVEMENT_CAMERA_ZOOM_LEVELS[movementCameraZoomLevel];
+
     ctx.cameraTarget.copy(ctx.character.position).add(ctx.cameraOffset);
     const cameraLerp = 1 - Math.exp(-5 * delta);
     ctx.camera.position.lerp(ctx.cameraTarget, cameraLerp);
+    ctx.camera.zoom += (targetZoom - ctx.camera.zoom) * cameraLerp;
+    ctx.camera.updateProjectionMatrix();
     ctx.camera.lookAt(
       ctx.character.position.x,
       ctx.character.position.y + 0.65,
       ctx.character.position.z,
     );
   };
+
+  ctx.canvas.addEventListener(
+    'wheel',
+    (event) => {
+      if (ctx.currentMode !== 'movement') return;
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      movementCameraZoomLevel = THREE.MathUtils.clamp(
+        movementCameraZoomLevel + direction,
+        0,
+        MOVEMENT_CAMERA_ZOOM_LEVELS.length - 1,
+      );
+    },
+    { passive: false },
+  );
 
   const CHARACTER_DIRECTORY = '/models/assets/character/';
   const PREFERRED_CHARACTER_FILE = 'sparrow.glb';
@@ -398,11 +442,12 @@ export function initMovement(ctx) {
             // movement state instead of just playing every clip at once.
             idleAction = ctx.mixer.clipAction(idleClip);
             runAction = ctx.mixer.clipAction(runClip);
-            [idleAction, runAction].forEach((action) => {
-              action.play();
-              action.setEffectiveWeight(0);
-            });
-            idleAction.setEffectiveWeight(1);
+            // Leave .weight at its default of 1 for both — fadeIn/fadeOut (used
+            // below by applyCharacterPose) multiply their ramp against .weight,
+            // so setEffectiveWeight(0) here would permanently pin it to 0 and
+            // silently break every future fadeIn.
+            idleAction.play();
+            runAction.play();
           } else {
             // No recognizable idle/run naming (e.g. the bundled animal pack) —
             // fall back to the old behavior of just playing every clip.
@@ -420,4 +465,135 @@ export function initMovement(ctx) {
   });
 
   ctx.canvas.addEventListener('pointerdown', ctx.setDestination);
+
+  const interactionWorldPosition = new THREE.Vector3();
+  // Whatever object(s) currently have UI open (the picker's candidates, or
+  // the single object behind an open modal) — checked every frame so the UI
+  // auto-closes once the player walks out of range of all of them.
+  let activeInteractionTargets = [];
+
+  function isWithinInteractionRange(object) {
+    object.getWorldPosition(interactionWorldPosition);
+    const dx = interactionWorldPosition.x - ctx.character.position.x;
+    const dz = interactionWorldPosition.z - ctx.character.position.z;
+    return dx * dx + dz * dz <= INTERACTION_RADIUS * INTERACTION_RADIUS;
+  }
+
+  function hideInteractionPicker() {
+    ctx.interactionPicker.hidden = true;
+    ctx.interactionPickerList.innerHTML = '';
+  }
+
+  function hideMemoModal() {
+    ctx.memoModal.hidden = true;
+  }
+
+  function hideChoiceModal() {
+    ctx.choiceModal.hidden = true;
+    ctx.choiceModalOptions.hidden = false;
+    ctx.choiceModalOptions.innerHTML = '';
+    ctx.choiceModalResult.hidden = true;
+    ctx.choiceModalResult.textContent = '';
+  }
+
+  ctx.cancelInteractionPicker = () => {
+    hideInteractionPicker();
+    hideMemoModal();
+    hideChoiceModal();
+    activeInteractionTargets = [];
+  };
+
+  function showMemoModal(object) {
+    ctx.memoModalText.textContent = object.userData.memoText || '';
+    ctx.memoModal.hidden = false;
+    activeInteractionTargets = [object];
+  }
+
+  function showChoiceModal(object) {
+    const options = object.userData.choiceOptions || [];
+    ctx.choiceModalOptions.innerHTML = '';
+    options.forEach((option) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = option.label || '(제목 없음)';
+      button.addEventListener('click', () => {
+        ctx.choiceModalOptions.hidden = true;
+        ctx.choiceModalResult.hidden = false;
+        ctx.choiceModalResult.textContent = option.resultText || '';
+      });
+      ctx.choiceModalOptions.append(button);
+    });
+    ctx.choiceModal.hidden = false;
+    activeInteractionTargets = [object];
+  }
+
+  ctx.memoModalClose.addEventListener('click', ctx.cancelInteractionPicker);
+  ctx.choiceModalClose.addEventListener('click', ctx.cancelInteractionPicker);
+
+  // Does the actual "interact" action. Memo/choice show real modals; image
+  // is still a status-text placeholder until that UI exists.
+  function performInteraction(object) {
+    hideInteractionPicker();
+    if (object.userData.interactionType === 'memo') {
+      showMemoModal(object);
+      return;
+    }
+    if (object.userData.interactionType === 'choice') {
+      showChoiceModal(object);
+      return;
+    }
+    console.log('[interact]', object.userData.interactionType, object);
+    ctx.editorStatus.textContent = `상호작용: ${object.name} (${object.userData.interactionType})`;
+    activeInteractionTargets = [object];
+  }
+
+  function showInteractionPicker(candidates) {
+    ctx.interactionPickerList.innerHTML = '';
+    candidates.forEach((object) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = object.name;
+      button.addEventListener('click', () => performInteraction(object));
+      ctx.interactionPickerList.append(button);
+    });
+    ctx.interactionPicker.hidden = false;
+    activeInteractionTargets = candidates;
+  }
+
+  // Finds every interactable object within reach. One candidate interacts
+  // immediately; multiple candidates open a picker so the player chooses.
+  ctx.tryInteract = () => {
+    if (ctx.currentMode !== 'movement') return;
+    hideInteractionPicker();
+    hideMemoModal();
+    hideChoiceModal();
+
+    const candidates = [];
+    ctx.placedObjects.forEach((object) => {
+      if (!object.userData.interactionType) return;
+      object.getWorldPosition(interactionWorldPosition);
+      const dx = interactionWorldPosition.x - ctx.character.position.x;
+      const dz = interactionWorldPosition.z - ctx.character.position.z;
+      const distanceSq = dx * dx + dz * dz;
+      if (distanceSq <= INTERACTION_RADIUS * INTERACTION_RADIUS) {
+        candidates.push({ object, distanceSq });
+      }
+    });
+    candidates.sort((a, b) => a.distanceSq - b.distanceSq);
+
+    if (candidates.length === 0) return;
+    if (candidates.length === 1) {
+      performInteraction(candidates[0].object);
+      return;
+    }
+    showInteractionPicker(candidates.map((candidate) => candidate.object));
+  };
+
+  // Closes whatever interaction UI is open once the player walks out of
+  // range of every object it's showing.
+  ctx.updateInteractionRange = () => {
+    if (activeInteractionTargets.length === 0) return;
+    const stillInRange = activeInteractionTargets.some(isWithinInteractionRange);
+    if (!stillInRange) ctx.cancelInteractionPicker();
+  };
 }

@@ -63,19 +63,16 @@ export function createScene(canvas, mapId) {
     ctx.mixer?.update(delta);
     ctx.updateCharacterGravity(delta);
     ctx.updateMovement(delta);
+    ctx.updateInteractionRange();
     ctx.updateCharacterCollisionDebug();
     ctx.updateQuarterView(delta);
+    ctx.updateWallOcclusion(delta);
     ctx.updateEditorCameraMovement(delta);
     if (ctx.currentMode === 'editor' || ctx.currentMode === 'roomBuilder') ctx.orbitControls.update();
     ctx.updateSelectionOutlines();
 
     ctx.destinationMarker.material.opacity = 0.55 + Math.sin(ctx.clock.elapsedTime * 5) * 0.25;
     ctx.renderer.render(ctx.scene, ctx.camera);
-
-    if (ctx.currentMode === 'editor' && ctx.previewGroup.children.length) {
-      ctx.previewGroup.rotation.y += delta * 0.6;
-      ctx.previewRenderer.render(ctx.previewScene, ctx.previewCamera);
-    }
   }
 
   animate();

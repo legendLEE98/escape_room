@@ -21,6 +21,7 @@ export function initMode(ctx) {
 
   ctx.setMode = (mode) => {
     ctx.currentMode = mode;
+    ctx.cancelInteractionPicker?.();
     document.body.dataset.mode = mode;
     const isEditor = mode === 'editor';
     const isMovement = mode === 'movement';
@@ -87,6 +88,11 @@ export function initMode(ctx) {
         ctx.character.position.set(spawn.x, 0, spawn.z);
       }
       ctx.startCharacterFall();
+      // Editor-mode mouse-wheel zoom (orbitControls.zoom) otherwise carries
+      // over untouched into movement mode, so the play-test view would look
+      // different depending on whatever zoom level was left over from editing.
+      ctx.camera.zoom = 1;
+      ctx.resetMovementCameraZoom();
       ctx.camera.position.copy(ctx.character.position).add(ctx.cameraOffset);
       ctx.camera.lookAt(
         ctx.character.position.x,
@@ -109,7 +115,11 @@ export function initMode(ctx) {
   });
 
   window.addEventListener('keydown', (event) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
+    if (
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLSelectElement ||
+      event.target instanceof HTMLTextAreaElement
+    ) {
       return;
     }
 
@@ -127,6 +137,11 @@ export function initMode(ctx) {
         event.preventDefault();
         ctx.renameSelectedObject();
       }
+    }
+
+    if (ctx.currentMode === 'movement') {
+      if (event.code === 'KeyG') ctx.tryInteract();
+      if (event.code === 'Escape') ctx.cancelInteractionPicker();
     }
 
     if (!['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return;

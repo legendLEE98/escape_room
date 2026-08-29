@@ -23,63 +23,6 @@ export function initAssetPreview(ctx) {
   ctx.thumbnailCanvasSize = THUMBNAIL_SIZE;
   ctx.selectedAssetFile = '';
 
-  const previewRenderer = new THREE.WebGLRenderer({
-    canvas: ctx.assetPreviewCanvas,
-    antialias: true,
-    alpha: true,
-  });
-  previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
-
-  const previewScene = new THREE.Scene();
-  const previewCamera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
-  const previewGroup = new THREE.Group();
-  previewScene.add(previewGroup);
-  previewScene.add(new THREE.HemisphereLight('#c9dcff', '#172033', 2.4));
-  const previewLight = new THREE.DirectionalLight('#fff4df', 3);
-  previewLight.position.set(4, 6, 4);
-  previewScene.add(previewLight);
-
-  ctx.previewRenderer = previewRenderer;
-  ctx.previewScene = previewScene;
-  ctx.previewCamera = previewCamera;
-  ctx.previewGroup = previewGroup;
-
-  let previewToken = 0;
-
-  function updatePreviewProjection() {
-    const width = ctx.assetPreviewCanvas.clientWidth;
-    const height = ctx.assetPreviewCanvas.clientHeight;
-    if (!width || !height) return;
-    previewRenderer.setSize(width, height, false);
-    previewCamera.aspect = width / height;
-    previewCamera.updateProjectionMatrix();
-  }
-
-  new ResizeObserver(updatePreviewProjection).observe(ctx.assetPreviewCanvas);
-
-  async function loadAssetPreview(asset) {
-    const token = ++previewToken;
-    previewGroup.clear();
-    if (!asset) return;
-
-    try {
-      const template = await ctx.loadAssetTemplate(asset);
-      if (token !== previewToken) return;
-      const content = template.clone(true);
-      cloneMaterials(content);
-      previewGroup.add(content);
-      frameObjectForCamera(content, previewCamera);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  ctx.updateAssetPreviewFromSelect = () => {
-    const asset = ctx.assetCatalog.find((item) => item.file === ctx.selectedAssetFile);
-    loadAssetPreview(asset);
-  };
-
   const thumbnailRenderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: true,
@@ -151,6 +94,5 @@ export function initAssetPreview(ctx) {
     ctx.assetSelect.querySelectorAll('.asset-card').forEach((card) => {
       card.classList.toggle('is-selected', card.dataset.file === file);
     });
-    ctx.updateAssetPreviewFromSelect();
   };
 }

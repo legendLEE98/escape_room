@@ -43,6 +43,9 @@ export function initPlacement(ctx) {
       container.userData.colliderShape = transform?.colliderShape ?? 'box';
       container.userData.useGravity = transform?.useGravity ?? false;
       container.userData.interactionType = transform?.interactionType ?? null;
+      container.userData.bgImageUrl = transform?.bgImageUrl ?? null;
+      container.userData.memoText = transform?.memoText ?? null;
+      container.userData.choiceOptions = transform?.choiceOptions ?? null;
       container.userData.connectedRoomId = transform?.connectedRoomId ?? null;
       container.userData.parentInstanceId = null;
 
@@ -78,6 +81,9 @@ export function initPlacement(ctx) {
     container.userData.colliderShape = transform?.colliderShape ?? 'box';
     container.userData.useGravity = transform?.useGravity ?? false;
     container.userData.interactionType = transform?.interactionType ?? null;
+    container.userData.bgImageUrl = transform?.bgImageUrl ?? null;
+    container.userData.memoText = transform?.memoText ?? null;
+    container.userData.choiceOptions = transform?.choiceOptions ?? null;
     container.userData.connectedRoomId = transform?.connectedRoomId ?? null;
     container.userData.parentInstanceId = null;
 

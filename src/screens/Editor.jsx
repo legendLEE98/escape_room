@@ -23,7 +23,7 @@ export default function Editor({ mapId, onBack }) {
             방 수정
           </button>
           <button className="mode-button" data-mode="movement">
-            움직임 테스트
+            플레이 테스트
           </button>
         </nav>
 
@@ -61,7 +61,6 @@ export default function Editor({ mapId, onBack }) {
             placeholder="chair, desk, cabinet..."
             autoComplete="off"
           />
-          <canvas id="asset-preview" aria-label="선택한 에셋 미리보기" />
           <div
             id="asset-select"
             className="asset-grid"
@@ -236,20 +235,49 @@ export default function Editor({ mapId, onBack }) {
             </p>
 
             <div id="interaction-body" hidden>
-              <label htmlFor="interaction-type">상호작용 종류</label>
-              <select id="interaction-type">
-                <option value="none">없음</option>
-                <option value="door">문 (다른 방으로 연결)</option>
-              </select>
-
-              <div id="interaction-door-fields" hidden>
-                <label htmlFor="interaction-connected-room">연결할 방</label>
-                <select id="interaction-connected-room" />
+              <div id="interaction-none-state">
+                <button type="button" id="interaction-add-button">
+                  + 상호작용 추가
+                </button>
+                <div id="interaction-type-choices" hidden>
+                  <button type="button" data-interaction-type="memo">
+                    메모
+                  </button>
+                  <button type="button" data-interaction-type="choice">
+                    선택지
+                  </button>
+                  <button type="button" data-interaction-type="image">
+                    이미지
+                  </button>
+                </div>
               </div>
 
-              <label htmlFor="inspector-bg-image">연결할 2D 이미지 (로컬 파일)</label>
-              <input id="inspector-bg-image" type="file" accept="image/*" />
-              <img id="inspector-bg-preview" alt="" hidden />
+              <div id="interaction-active-state" hidden>
+                <div className="interaction-active-header">
+                  <span id="interaction-active-label" />
+                  <button type="button" id="interaction-remove-button">
+                    상호작용 삭제
+                  </button>
+                </div>
+
+                <div id="interaction-memo-fields" hidden>
+                  <label htmlFor="interaction-memo-text">메모 내용</label>
+                  <textarea id="interaction-memo-text" rows={4} />
+                </div>
+
+                <div id="interaction-choice-fields" hidden>
+                  <div id="interaction-choice-list" />
+                  <button type="button" id="interaction-choice-add-button">
+                    + 선택지 추가
+                  </button>
+                </div>
+
+                <div id="interaction-image-fields" hidden>
+                  <label htmlFor="inspector-bg-image">2D 이미지 (로컬 파일)</label>
+                  <input id="inspector-bg-image" type="file" accept="image/*" />
+                  <img id="inspector-bg-preview" alt="" hidden />
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -260,6 +288,30 @@ export default function Editor({ mapId, onBack }) {
         <span>우클릭 드래그: 카메라 회전</span>
         <span>휠: 확대</span>
         <span>WASD: 카메라 이동</span>
+      </div>
+
+      <div id="interaction-picker" className="interaction-picker" hidden>
+        <p className="interaction-picker-title">조사할 곳을 선택하세요</p>
+        <div id="interaction-picker-list" className="interaction-picker-list" />
+      </div>
+
+      <div id="memo-modal" className="memo-modal-overlay" hidden>
+        <div className="memo-modal">
+          <button type="button" id="memo-modal-close" className="memo-modal-close" aria-label="닫기">
+            ×
+          </button>
+          <p id="memo-modal-text" className="memo-modal-text" />
+        </div>
+      </div>
+
+      <div id="choice-modal" className="choice-modal-overlay" hidden>
+        <div className="choice-modal">
+          <button type="button" id="choice-modal-close" className="choice-modal-close" aria-label="닫기">
+            ×
+          </button>
+          <div id="choice-modal-options" className="choice-modal-options" />
+          <p id="choice-modal-result" className="choice-modal-result" hidden />
+        </div>
       </div>
 
       <div id="room-builder-name-panel" className="room-builder-name-panel" hidden>

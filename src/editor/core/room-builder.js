@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 
 const FLOOR_COLOR = 0x8a7257;
+const WALL_COLOR = 0x9a9a9a; // placeholder — swap for a real material/texture later
+const WALL_HEIGHT = 2;
+const WALL_THICKNESS = 0.15;
 const CELL_HIGHLIGHT_COLOR = 0x8fc5ff;
 const PENDING_ADD_COLOR = 0xffd166;
 const PENDING_REMOVE_COLOR = 0xff6b6b;
@@ -187,6 +190,154 @@ export function initRoomBuilder(ctx) {
     room.floorCells = cells;
   };
 
+  // Collapses a set of integer positions into [start, end] runs of
+  // consecutive values, e.g. [0,1,2,5,6] -> [[0,2],[5,6]].
+  function mergeRuns(values) {
+    const sorted = [...new Set(values)].sort((a, b) => a - b);
+    const runs = [];
+    let start = null;
+    let end = null;
+    sorted.forEach((value) => {
+      if (start === null) {
+        start = value;
+        end = value;
+      } else if (value === end + 1) {
+        end = value;
+      } else {
+        runs.push([start, end]);
+        start = value;
+        end = value;
+      }
+    });
+    if (start !== null) runs.push([start, end]);
+    return runs;
+  }
+
+  ctx.buildRoomWalls = (room, cells) => {
+    const wallGroup = new THREE.Group();
+    wallGroup.userData.isRoomWalls = true;
+
+    const addWall = (geometry, x, z) => {
+      // Each wall gets its own material instance (not shared) so
+      // updateWallOcclusion can fade individual segments independently.
+      const material = new THREE.MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.9, transparent: true });
+      const wall = new THREE.Mesh(geometry, material);
+      wall.position.set(x, WALL_HEIGHT / 2, z);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      wallGroup.add(wall);
+    };
+
+    const floorSet = new Set(cells.map(({ x, z }) => cellKey(x, z)));
+
+    // Group missing-neighbor edges by the fixed grid line they sit on, then
+    // merge each line's consecutive cells into one wall run — building one
+    // box per straight run (not one per cell) so adjacent same-orientation
+    // segments never overlap each other and z-fight.
+    const horizontalLines = new Map(); // z (fixed) -> [x, x, ...]
+    const verticalLines = new Map(); // x (fixed) -> [z, z, ...]
+    const addToLine = (map, key, value) => {
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(value);
+    };
+
+    cells.forEach(({ x, z }) => {
+      if (!floorSet.has(cellKey(x, z - 1))) addToLine(horizontalLines, z, x); // north
+      if (!floorSet.has(cellKey(x, z + 1))) addToLine(horizontalLines, z + 1, x); // south
+      if (!floorSet.has(cellKey(x - 1, z))) addToLine(verticalLines, x, z); // west
+      if (!floorSet.has(cellKey(x + 1, z))) addToLine(verticalLines, x + 1, z); // east
+    });
+
+    // Horizontal (north/south-facing) runs are stretched half a thickness
+    // past each end so they alone fill every outer corner; vertical
+    // (east/west-facing) runs stay at their exact span and butt flush
+    // against them — extending both would make their faces coincide inside
+    // the corner and z-fight.
+    horizontalLines.forEach((xs, z) => {
+      mergeRuns(xs).forEach(([start, end]) => {
+        const length = end - start + 1;
+        const geometry = new THREE.BoxGeometry(length + WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS);
+        addWall(geometry, start + length / 2, z);
+      });
+    });
+    verticalLines.forEach((zs, x) => {
+      mergeRuns(zs).forEach(([start, end]) => {
+        const length = end - start + 1;
+        // Inset (not just "un-extended") by half a thickness at each end —
+        // the horizontal runs' extension already fully covers that sliver,
+        // so this leaves the two runs touching with zero shared volume
+        // instead of a small overlapping cube at the corner (which caused
+        // the top face of both boxes to coincide there and z-fight).
+        const geometry = new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, length - WALL_THICKNESS);
+        addWall(geometry, x, start + length / 2);
+      });
+    });
+
+    room.root.add(wallGroup);
+  };
+
+  const WALL_OCCLUDED_OPACITY = 0;
+  const WALL_EDITOR_OPACITY = 0.3;
+  const WALL_OPACITY_LERP_SPEED = 10;
+  // How far left/right of the center sightline to also probe, so walls that
+  // block the character's sides (not just its exact center point) fade too.
+  const OCCLUSION_RAY_SPREAD = 0.45;
+  const occlusionRaycaster = new THREE.Raycaster();
+  const occlusionOrigin = new THREE.Vector3();
+  const occlusionDirection = new THREE.Vector3();
+  const occlusionPerpendicular = new THREE.Vector3();
+  const occlusionProbeOrigin = new THREE.Vector3();
+  // Hysteresis: once a wall is hit, keep it faded for a bit even if a later
+  // frame's raycast narrowly misses — otherwise borderline positions flicker
+  // opaque/faded every frame as the hit test tips back and forth.
+  const OCCLUSION_HOLD_SECONDS = 0.2;
+  const wallHeldUntil = new WeakMap();
+
+  ctx.updateWallOcclusion = (delta) => {
+    const room = ctx.rooms?.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    const wallGroup = room?.root.children.find((child) => child.userData.isRoomWalls);
+    if (!wallGroup || wallGroup.children.length === 0) return;
+
+    let hitWalls = null;
+    if (ctx.currentMode === 'movement') {
+      // Cast from the character (roughly chest height) toward the camera —
+      // any wall segment the ray crosses is standing between the player and
+      // the camera, regardless of which side of the room it's on.
+      occlusionOrigin.copy(ctx.character.position);
+      occlusionOrigin.y += 0.8;
+      occlusionDirection.subVectors(ctx.camera.position, occlusionOrigin);
+      const distance = occlusionDirection.length();
+      occlusionDirection.normalize();
+      // Horizontal-plane perpendicular of the sightline, used to spread a
+      // few extra probes across the character's width instead of just its
+      // exact center point.
+      occlusionPerpendicular.set(-occlusionDirection.z, 0, occlusionDirection.x).normalize();
+
+      hitWalls = new Set();
+      [0, OCCLUSION_RAY_SPREAD, -OCCLUSION_RAY_SPREAD].forEach((offset) => {
+        occlusionProbeOrigin.copy(occlusionOrigin).addScaledVector(occlusionPerpendicular, offset);
+        occlusionRaycaster.set(occlusionProbeOrigin, occlusionDirection);
+        occlusionRaycaster.far = distance;
+        occlusionRaycaster
+          .intersectObjects(wallGroup.children, false)
+          .forEach((hit) => hitWalls.add(hit.object));
+      });
+    }
+
+    const now = ctx.clock.elapsedTime;
+    hitWalls?.forEach((wall) => wallHeldUntil.set(wall, now + OCCLUSION_HOLD_SECONDS));
+
+    const isEditingView = ctx.currentMode === 'editor' || ctx.currentMode === 'roomBuilder';
+
+    wallGroup.children.forEach((wall) => {
+      const isHeld = (wallHeldUntil.get(wall) ?? 0) > now;
+      let targetOpacity = 1;
+      if (isHeld) targetOpacity = WALL_OCCLUDED_OPACITY;
+      else if (isEditingView) targetOpacity = WALL_EDITOR_OPACITY;
+      wall.material.opacity += (targetOpacity - wall.material.opacity) * Math.min(1, delta * WALL_OPACITY_LERP_SPEED);
+    });
+  };
+
   ctx.startRoomBuilder = () => {
     ctx.editingRoomInstanceId = null;
     clearDraft();
@@ -236,6 +387,8 @@ export function initRoomBuilder(ctx) {
       room = editingRoom;
       const oldFloor = room.root.children.find((child) => child.userData.isRoomFloor);
       if (oldFloor) room.root.remove(oldFloor);
+      const oldWalls = room.root.children.find((child) => child.userData.isRoomWalls);
+      if (oldWalls) room.root.remove(oldWalls);
       room.name = name;
       room.root.name = name;
     } else {
@@ -244,6 +397,7 @@ export function initRoomBuilder(ctx) {
     }
 
     ctx.buildRoomFloor(room, cells);
+    ctx.buildRoomWalls(room, cells);
 
     ctx.currentRoomInstanceId = room.instanceId;
     ctx.applyRoomVisibility();

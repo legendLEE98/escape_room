@@ -78,6 +78,8 @@ export function initPersistence(ctx) {
             ? {
                 interactionType: object.userData.interactionType,
                 bgImageUrl: object.userData.bgImageUrl || null,
+                memoText: object.userData.memoText || null,
+                choiceOptions: object.userData.choiceOptions || null,
                 connectedRoomId:
                   object.userData.connectedRoomId != null ? `room-${object.userData.connectedRoomId}` : null,
               }
@@ -111,7 +113,10 @@ export function initPersistence(ctx) {
     const roomIdMap = new Map();
     ctx.rooms = savedRooms.map((savedRoom, index) => {
       const room = ctx.createRoom(savedRoom.roomName || `방${index + 1}`, Boolean(savedRoom.isStartRoom));
-      if (savedRoom.floorCells?.length) ctx.buildRoomFloor(room, savedRoom.floorCells);
+      if (savedRoom.floorCells?.length) {
+        ctx.buildRoomFloor(room, savedRoom.floorCells);
+        ctx.buildRoomWalls(room, savedRoom.floorCells);
+      }
       // Keep the raw saved objects around so an unopened room can still be
       // round-tripped through save/restore without ever being instantiated —
       // initialSpawnPos/connectedRooms are re-derived from these, not stored separately.
@@ -138,6 +143,9 @@ export function initPersistence(ctx) {
           colliderShape: item.colliderShape ?? 'box',
           useGravity: item.useGravity ?? false,
           interactionType: interaction.interactionType ?? null,
+          bgImageUrl: interaction.bgImageUrl ?? null,
+          memoText: interaction.memoText ?? null,
+          choiceOptions: interaction.choiceOptions ?? null,
           connectedRoomId: interaction.connectedRoomId ? roomIdMap.get(interaction.connectedRoomId) ?? null : null,
           visible: item.visible ?? true,
           savedId: item.id,
