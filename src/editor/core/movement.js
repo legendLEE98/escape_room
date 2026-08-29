@@ -31,6 +31,10 @@ export function initMovement(ctx) {
   ctx.isFalling = false;
   let fallVelocity = 0;
   let currentSquidIndex = -1;
+  let idleAction = null;
+  let runAction = null;
+  let isAnimatingRun = null;
+  const ANIMATION_CROSSFADE_SECONDS = 0.25;
 
   const characterCollisionRing = new THREE.Mesh(
     new THREE.RingGeometry(Math.max(CHARACTER_RADIUS - 0.03, 0.01), CHARACTER_RADIUS, 32),
@@ -63,7 +67,7 @@ export function initMovement(ctx) {
 
   let characterScale = null;
 
-  function centerSelectedSquid(selected) {
+  function fitModelToCharacter(selected) {
     if (!selected || !ctx.loadedModel) return;
     ctx.loadedModel.position.set(0, 0, 0);
     ctx.character.scale.setScalar(1);
@@ -94,15 +98,28 @@ export function initMovement(ctx) {
     ctx.squidMeshes.forEach((mesh) => {
       mesh.visible = mesh === selected;
     });
-    centerSelectedSquid(selected);
+    fitModelToCharacter(selected);
   }
 
-  function applySquidPose(moving) {
-    if (!ctx.squidMeshes.length) return;
-    const targetIndex = Math.min(moving ? WALK_SQUID_INDEX : IDLE_SQUID_INDEX, ctx.squidMeshes.length - 1);
-    if (targetIndex === currentSquidIndex) return;
-    currentSquidIndex = targetIndex;
-    showSquid(targetIndex);
+  function applyCharacterPose(moving) {
+    if (ctx.squidMeshes.length) {
+      const targetIndex = Math.min(moving ? WALK_SQUID_INDEX : IDLE_SQUID_INDEX, ctx.squidMeshes.length - 1);
+      if (targetIndex !== currentSquidIndex) {
+        currentSquidIndex = targetIndex;
+        showSquid(targetIndex);
+      }
+    }
+
+    if (idleAction && runAction && moving !== isAnimatingRun) {
+      isAnimatingRun = moving;
+      const active = moving ? runAction : idleAction;
+      const inactive = moving ? idleAction : runAction;
+      // THREE's fadeIn/fadeOut always ramp from a hard-coded 0 or 1, not the
+      // action's current weight — so this must fire once on state change only,
+      // never every frame, or the ramp keeps getting reset before it finishes.
+      active.reset().fadeIn(ANIMATION_CROSSFADE_SECONDS).play();
+      inactive.fadeOut(ANIMATION_CROSSFADE_SECONDS);
+    }
   }
 
   ctx.startCharacterFall = () => {
@@ -123,12 +140,31 @@ export function initMovement(ctx) {
   };
 
   ctx.computeEditorLayoutBounds = () => {
-    if (ctx.placedObjects.length === 0) return null;
-    const box = new THREE.Box3();
-    ctx.placedObjects.forEach((object) => box.expandByObject(object));
+    // Walkable area is the room's drawn floor (room.floorCells), not a bounding
+    // box of the furniture — a furniture-bbox rectangle is both narrower than
+    // the actual floor (small desk near the middle of a big room) and wrong
+    // shape for non-rectangular rooms (lets the character walk into notches
+    // that have no floor).
+    const room = ctx.rooms?.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    const cells = room?.floorCells ?? [];
+    if (cells.length === 0) return null;
+
+    const cellSet = new Set(cells.map(({ x, z }) => `${x},${z}`));
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    cells.forEach(({ x, z }) => {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x + 1);
+      minZ = Math.min(minZ, z);
+      maxZ = Math.max(maxZ, z + 1);
+    });
+
     return {
-      min: new THREE.Vector3(box.min.x - 1, 0, box.min.z - 1),
-      max: new THREE.Vector3(box.max.x + 1, 0, box.max.z + 1),
+      cellSet,
+      min: new THREE.Vector3(minX, 0, minZ),
+      max: new THREE.Vector3(maxX, 0, maxZ),
     };
   };
 
@@ -150,12 +186,9 @@ export function initMovement(ctx) {
 
   ctx.isInsideActiveMap = (position) => {
     if (!ctx.editorLayoutBounds) return false;
-    const insideBounds =
-      position.x >= ctx.editorLayoutBounds.min.x &&
-      position.x <= ctx.editorLayoutBounds.max.x &&
-      position.z >= ctx.editorLayoutBounds.min.z &&
-      position.z <= ctx.editorLayoutBounds.max.z;
-    return insideBounds && !isBlockedByPlacedObjects(position);
+    const cellKey = `${Math.floor(position.x)},${Math.floor(position.z)}`;
+    const onFloor = ctx.editorLayoutBounds.cellSet.has(cellKey);
+    return onFloor && !isBlockedByPlacedObjects(position);
   };
 
   const spawnCandidate = new THREE.Vector3();
@@ -183,8 +216,14 @@ export function initMovement(ctx) {
     ctx.destinationMarker.visible = false;
   };
 
+  // sparrow.glb's authored forward axis doesn't match the +Z assumption below —
+  // this constant corrects the mismatch. Measured directly from the GLB's
+  // bind-pose bone positions (body->tail and wing.L/wing.R symmetry axis
+  // independently agree to 0.001deg): local forward sits at -56.0976deg off +Z.
+  const CHARACTER_FACING_OFFSET = (56.09761797820096 * Math.PI) / 180;
+
   function rotateTowardsMovement(delta) {
-    const targetRotation = Math.atan2(movementDirection.x, movementDirection.z);
+    const targetRotation = Math.atan2(movementDirection.x, movementDirection.z) + CHARACTER_FACING_OFFSET;
     const rotationDifference = Math.atan2(
       Math.sin(targetRotation - ctx.character.rotation.y),
       Math.cos(targetRotation - ctx.character.rotation.y),
@@ -249,11 +288,11 @@ export function initMovement(ctx) {
 
   ctx.updateMovement = (delta) => {
     if (updateKeyboardMovement(delta)) {
-      applySquidPose(true);
+      applyCharacterPose(true);
       return;
     }
     if (!ctx.isMoving) {
-      applySquidPose(false);
+      applyCharacterPose(false);
       return;
     }
 
@@ -265,11 +304,11 @@ export function initMovement(ctx) {
       ctx.character.position.copy(destination);
       ctx.isMoving = false;
       ctx.destinationMarker.visible = false;
-      applySquidPose(false);
+      applyCharacterPose(false);
       return;
     }
 
-    applySquidPose(true);
+    applyCharacterPose(true);
     movementDirection.normalize();
     const previousPosition = ctx.character.position.clone();
     ctx.character.position.addScaledVector(
@@ -280,7 +319,7 @@ export function initMovement(ctx) {
       ctx.character.position.copy(previousPosition);
       ctx.isMoving = false;
       ctx.destinationMarker.visible = false;
-      applySquidPose(false);
+      applyCharacterPose(false);
       return;
     }
     rotateTowardsMovement(delta);
@@ -299,6 +338,7 @@ export function initMovement(ctx) {
   };
 
   const CHARACTER_DIRECTORY = '/models/assets/character/';
+  const PREFERRED_CHARACTER_FILE = 'sparrow.glb';
   const FALLBACK_CHARACTER_FILE = 'quirky_series_-_free_animals_pack.glb';
 
   async function resolveCharacterUrl() {
@@ -306,7 +346,8 @@ export function initMovement(ctx) {
       const response = await fetch(`${CHARACTER_DIRECTORY}character-index.json`, { cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
-        const file = data.files?.[0];
+        const files = data.files ?? [];
+        const file = files.includes(PREFERRED_CHARACTER_FILE) ? PREFERRED_CHARACTER_FILE : files[0];
         if (file) return `${CHARACTER_DIRECTORY}${encodeURIComponent(file)}`;
       }
     } catch (error) {
@@ -344,13 +385,32 @@ export function initMovement(ctx) {
           });
         }
         ctx.character.add(ctx.loadedModel);
+        if (ctx.squidMeshes.length === 0) {
+          fitModelToCharacter(ctx.loadedModel);
+        }
 
         if (gltf.animations.length) {
           ctx.mixer = new THREE.AnimationMixer(ctx.loadedModel);
-          gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+          const idleClip = gltf.animations.find((clip) => /idle/i.test(clip.name));
+          const runClip = gltf.animations.find((clip) => /run/i.test(clip.name));
+          if (idleClip && runClip) {
+            // Named idle/run pair (e.g. sparrow.glb) — crossfade between them by
+            // movement state instead of just playing every clip at once.
+            idleAction = ctx.mixer.clipAction(idleClip);
+            runAction = ctx.mixer.clipAction(runClip);
+            [idleAction, runAction].forEach((action) => {
+              action.play();
+              action.setEffectiveWeight(0);
+            });
+            idleAction.setEffectiveWeight(1);
+          } else {
+            // No recognizable idle/run naming (e.g. the bundled animal pack) —
+            // fall back to the old behavior of just playing every clip.
+            gltf.animations.forEach((clip) => ctx.mixer.clipAction(clip).play());
+          }
         }
 
-        applySquidPose(false);
+        applyCharacterPose(false);
       },
       undefined,
       (error) => {

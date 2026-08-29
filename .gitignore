@@ -28,5 +28,8 @@ isometric_office.glb
 quirky_series_-_free_animals_pack.glb
 public/models/*
 
+# Private asset sources — never web-servable, never committed (paid/licensed models)
+assets-src/*
+
 #bak
 *.bak
