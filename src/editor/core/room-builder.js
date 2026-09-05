@@ -12,6 +12,26 @@ function cellKey(x, z) {
   return `${x},${z}`;
 }
 
+function edgeKey(x, z, side) {
+  return `${x},${z},${side}`;
+}
+
+// All perimeter edges of a floor shape — every cell side that has no
+// same-room neighbor on the other side. Shared by wall generation (which
+// builds a wall on each edge, minus any marked as a door) and the room-link
+// panel (which snaps a click to the nearest one of these to place a door).
+function computeBoundaryEdges(cells) {
+  const floorSet = new Set(cells.map(({ x, z }) => cellKey(x, z)));
+  const edges = [];
+  cells.forEach(({ x, z }) => {
+    if (!floorSet.has(cellKey(x, z - 1))) edges.push({ x, z, side: 'N' });
+    if (!floorSet.has(cellKey(x, z + 1))) edges.push({ x, z, side: 'S' });
+    if (!floorSet.has(cellKey(x - 1, z))) edges.push({ x, z, side: 'W' });
+    if (!floorSet.has(cellKey(x + 1, z))) edges.push({ x, z, side: 'E' });
+  });
+  return edges;
+}
+
 export function initRoomBuilder(ctx) {
   ctx.roomDraftCells = new Map();
   ctx.editingRoomInstanceId = null;
@@ -213,7 +233,11 @@ export function initRoomBuilder(ctx) {
     return runs;
   }
 
-  ctx.buildRoomWalls = (room, cells) => {
+  ctx.computeBoundaryEdges = computeBoundaryEdges;
+  ctx.edgeKey = edgeKey;
+  ctx.wallHeight = WALL_HEIGHT;
+
+  ctx.buildRoomWalls = (room, cells, doorEdges = []) => {
     const wallGroup = new THREE.Group();
     wallGroup.userData.isRoomWalls = true;
 
@@ -228,12 +252,18 @@ export function initRoomBuilder(ctx) {
       wallGroup.add(wall);
     };
 
-    const floorSet = new Set(cells.map(({ x, z }) => cellKey(x, z)));
+    // Door edges get no wall segment at all — they're a plain opening in the
+    // perimeter (no lock/key state yet; that belongs to a separate object
+    // placed in the opening later, same as any other interactable).
+    const doorEdgeSet = new Set(doorEdges.map(({ x, z, side }) => edgeKey(x, z, side)));
+    const boundaryEdges = computeBoundaryEdges(cells).filter(
+      ({ x, z, side }) => !doorEdgeSet.has(edgeKey(x, z, side)),
+    );
 
-    // Group missing-neighbor edges by the fixed grid line they sit on, then
-    // merge each line's consecutive cells into one wall run — building one
-    // box per straight run (not one per cell) so adjacent same-orientation
-    // segments never overlap each other and z-fight.
+    // Group remaining edges by the fixed grid line they sit on, then merge
+    // each line's consecutive cells into one wall run — building one box per
+    // straight run (not one per cell) so adjacent same-orientation segments
+    // never overlap each other and z-fight.
     const horizontalLines = new Map(); // z (fixed) -> [x, x, ...]
     const verticalLines = new Map(); // x (fixed) -> [z, z, ...]
     const addToLine = (map, key, value) => {
@@ -241,39 +271,59 @@ export function initRoomBuilder(ctx) {
       map.get(key).push(value);
     };
 
-    cells.forEach(({ x, z }) => {
-      if (!floorSet.has(cellKey(x, z - 1))) addToLine(horizontalLines, z, x); // north
-      if (!floorSet.has(cellKey(x, z + 1))) addToLine(horizontalLines, z + 1, x); // south
-      if (!floorSet.has(cellKey(x - 1, z))) addToLine(verticalLines, x, z); // west
-      if (!floorSet.has(cellKey(x + 1, z))) addToLine(verticalLines, x + 1, z); // east
+    boundaryEdges.forEach(({ x, z, side }) => {
+      if (side === 'N') addToLine(horizontalLines, z, x);
+      if (side === 'S') addToLine(horizontalLines, z + 1, x);
+      if (side === 'W') addToLine(verticalLines, x, z);
+      if (side === 'E') addToLine(verticalLines, x + 1, z);
     });
 
+    // A run's endpoint only needs the corner treatment below if a
+    // perpendicular wall genuinely meets it there. A door can cut a run
+    // short right next to where a corner used to be, leaving an endpoint
+    // that ISN'T a real corner (nothing perpendicular touches it) — treating
+    // every endpoint as a corner unconditionally either pokes a wall stub
+    // into the doorway (horizontal extend) or leaves a real gap (vertical
+    // inset) with nothing to cover it, and can even overlap a nearby true
+    // corner's own extension and z-fight.
+    function hasVerticalWallAt(x, z) {
+      const zs = verticalLines.get(x);
+      return Boolean(zs) && (zs.includes(z) || zs.includes(z - 1));
+    }
+    function hasHorizontalWallAt(z, x) {
+      const xs = horizontalLines.get(z);
+      return Boolean(xs) && (xs.includes(x) || xs.includes(x - 1));
+    }
+
     // Horizontal (north/south-facing) runs are stretched half a thickness
-    // past each end so they alone fill every outer corner; vertical
-    // (east/west-facing) runs stay at their exact span and butt flush
-    // against them — extending both would make their faces coincide inside
-    // the corner and z-fight.
+    // past each end that's a real corner, so they alone fill it; vertical
+    // (east/west-facing) runs are inset by half a thickness at each end
+    // that's a real corner, so the two butt flush with zero shared volume
+    // (extending/insetting both unconditionally would make their faces
+    // coincide inside the corner and z-fight).
     horizontalLines.forEach((xs, z) => {
       mergeRuns(xs).forEach(([start, end]) => {
-        const length = end - start + 1;
-        const geometry = new THREE.BoxGeometry(length + WALL_THICKNESS, WALL_HEIGHT, WALL_THICKNESS);
-        addWall(geometry, start + length / 2, z);
+        const extendStart = hasVerticalWallAt(start, z) ? WALL_THICKNESS / 2 : 0;
+        const extendEnd = hasVerticalWallAt(end + 1, z) ? WALL_THICKNESS / 2 : 0;
+        const left = start - extendStart;
+        const right = end + 1 + extendEnd;
+        const geometry = new THREE.BoxGeometry(right - left, WALL_HEIGHT, WALL_THICKNESS);
+        addWall(geometry, (left + right) / 2, z);
       });
     });
     verticalLines.forEach((zs, x) => {
       mergeRuns(zs).forEach(([start, end]) => {
-        const length = end - start + 1;
-        // Inset (not just "un-extended") by half a thickness at each end —
-        // the horizontal runs' extension already fully covers that sliver,
-        // so this leaves the two runs touching with zero shared volume
-        // instead of a small overlapping cube at the corner (which caused
-        // the top face of both boxes to coincide there and z-fight).
-        const geometry = new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, length - WALL_THICKNESS);
-        addWall(geometry, x, start + length / 2);
+        const insetStart = hasHorizontalWallAt(start, x) ? WALL_THICKNESS / 2 : 0;
+        const insetEnd = hasHorizontalWallAt(end + 1, x) ? WALL_THICKNESS / 2 : 0;
+        const top = start + insetStart;
+        const bottom = end + 1 - insetEnd;
+        const geometry = new THREE.BoxGeometry(WALL_THICKNESS, WALL_HEIGHT, bottom - top);
+        addWall(geometry, x, (top + bottom) / 2);
       });
     });
 
     room.root.add(wallGroup);
+    room.doorEdges = doorEdges;
   };
 
   const WALL_OCCLUDED_OPACITY = 0;
@@ -383,8 +433,10 @@ export function initRoomBuilder(ctx) {
         : null;
 
     let room;
+    let previousDoorEdges = [];
     if (editingRoom) {
       room = editingRoom;
+      previousDoorEdges = room.doorEdges || [];
       const oldFloor = room.root.children.find((child) => child.userData.isRoomFloor);
       if (oldFloor) room.root.remove(oldFloor);
       const oldWalls = room.root.children.find((child) => child.userData.isRoomWalls);
@@ -396,8 +448,18 @@ export function initRoomBuilder(ctx) {
       ctx.rooms.push(room);
     }
 
+    // Redrawing the floor can shrink/reshape it, so an old door edge may no
+    // longer sit on the perimeter — drop any that don't, rather than leaving
+    // a dangling link with no matching wall gap to render it at.
+    const newBoundaryKeys = new Set(
+      computeBoundaryEdges(cells).map(({ x, z, side }) => edgeKey(x, z, side)),
+    );
+    const doorEdges = previousDoorEdges.filter(({ x, z, side }) =>
+      newBoundaryKeys.has(edgeKey(x, z, side)),
+    );
+
     ctx.buildRoomFloor(room, cells);
-    ctx.buildRoomWalls(room, cells);
+    ctx.buildRoomWalls(room, cells, doorEdges);
 
     ctx.currentRoomInstanceId = room.instanceId;
     ctx.applyRoomVisibility();
@@ -415,7 +477,7 @@ export function initRoomBuilder(ctx) {
   ctx.roomBuilderCancelButton.addEventListener('click', ctx.cancelRoomBuilder);
 
   ctx.canvas.addEventListener('pointermove', (event) => {
-    if (ctx.currentMode !== 'roomBuilder') {
+    if (ctx.currentMode !== 'roomBuilder' || ctx.isPickingDoorEdge || ctx.isPositioningGhost) {
       hoverMesh.visible = false;
       return;
     }
@@ -433,7 +495,7 @@ export function initRoomBuilder(ctx) {
   });
 
   ctx.canvas.addEventListener('pointerdown', (event) => {
-    if (ctx.currentMode !== 'roomBuilder' || event.button !== 0) return;
+    if (ctx.currentMode !== 'roomBuilder' || ctx.isPickingDoorEdge || ctx.isPositioningGhost || event.button !== 0) return;
     const cell = pointerToCell(event);
     if (!cell) return;
     dragStartCell = cell;
@@ -443,7 +505,7 @@ export function initRoomBuilder(ctx) {
   });
 
   window.addEventListener('pointerup', (event) => {
-    if (ctx.currentMode !== 'roomBuilder' || !isDragging || event.button !== 0) return;
+    if (ctx.currentMode !== 'roomBuilder' || ctx.isPickingDoorEdge || ctx.isPositioningGhost || !isDragging || event.button !== 0) return;
     isDragging = false;
     const endCell = pointerToCell(event) ?? dragStartCell;
     const cells = rectCells(dragStartCell, endCell);

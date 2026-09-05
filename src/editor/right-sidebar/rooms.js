@@ -6,7 +6,18 @@ export function initRooms(ctx) {
   ctx.currentRoomInstanceId = null;
 
   function createRoom(name, isStartRoom) {
-    const room = { instanceId: ctx.nextRoomInstanceId++, name, isStartRoom, _loaded: true };
+    const room = {
+      instanceId: ctx.nextRoomInstanceId++,
+      name,
+      isStartRoom,
+      _loaded: true,
+      // Where this room sits relative to every other room, in the same
+      // shared grid used by floorCells — set by dragging its ghost into
+      // place during room-link creation. Unrelated to the isolated-editing
+      // trick (room.root itself always renders at local origin while you're
+      // editing that specific room); this is purely link/ghost-placement data.
+      worldOffset: { x: 0, z: 0 },
+    };
     room.root = new THREE.Group();
     room.root.name = name;
     room.root.userData.isRoomRoot = true;

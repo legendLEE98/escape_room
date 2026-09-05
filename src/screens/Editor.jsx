@@ -295,6 +295,10 @@ export default function Editor({ mapId, onBack }) {
         <div id="interaction-picker-list" className="interaction-picker-list" />
       </div>
 
+      <div id="center-toast" className="center-toast" hidden>
+        <p id="center-toast-text" />
+      </div>
+
       <div id="memo-modal" className="memo-modal-overlay" hidden>
         <div className="memo-modal">
           <button type="button" id="memo-modal-close" className="memo-modal-close" aria-label="닫기">
@@ -332,6 +336,36 @@ export default function Editor({ mapId, onBack }) {
           </button>
         </div>
       </div>
+
+      <aside id="room-texture-panel" className="sidebar sidebar-left" hidden>
+        <div className="sidebar-body">
+          <p className="eyebrow">텍스처</p>
+          <p className="help">
+            준비 중입니다. 백엔드가 생기면 바닥/벽 텍스처를 여기서 업로드하고 방마다 지정할 수 있게 됩니다.
+          </p>
+        </div>
+      </aside>
+
+      <aside id="room-link-panel" className="sidebar sidebar-right" hidden>
+        <div className="sidebar-body sidebar-right-body">
+          <p className="eyebrow">방 연결</p>
+          <div id="room-link-list" className="room-link-list" />
+
+          <label htmlFor="room-link-target-select">연결할 방</label>
+          <select id="room-link-target-select" />
+          <button type="button" id="room-link-add-button" className="primary-button">
+            + 연결 추가
+          </button>
+          <p id="room-link-status" className="help" />
+
+          <div id="room-link-confirm-row" className="room-link-confirm-row" hidden>
+            <button type="button" id="room-link-confirm-button" className="primary-button">
+              링크 확정
+            </button>
+            <button type="button" id="room-link-cancel-button">취소</button>
+          </div>
+        </div>
+      </aside>
     </>
   );
 }

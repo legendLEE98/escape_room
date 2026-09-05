@@ -967,6 +967,42 @@ kbd {
   display: none;
 }
 
+.center-toast {
+  position: fixed;
+  z-index: 30;
+  top: 50%;
+  left: 50%;
+  max-width: min(420px, 80vw);
+  padding: 16px 22px;
+  border: 1px solid rgb(255 155 155 / 30%);
+  border-radius: 14px;
+  color: #ffdede;
+  background: rgb(40 12 12 / 92%);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 50%);
+  opacity: 1;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.center-toast[hidden] {
+  display: none;
+}
+
+.center-toast.center-toast-out {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.center-toast p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+}
+
 .interaction-picker-title {
   margin: 0;
   color: #8d9aac;
@@ -1434,5 +1470,73 @@ kbd {
 
 .hierarchy-context-menu-item:hover {
   color: #9dcdff;
+  background: rgb(255 255 255 / 6%);
+}
+
+.room-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.room-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #2b3748;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.room-link-row-label {
+  overflow: hidden;
+  color: #cbd4e1;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-link-row-remove {
+  flex: none;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  color: #ff9b9b;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.room-link-row-remove:hover {
+  background: rgb(255 155 155 / 12%);
+}
+
+.room-link-confirm-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.room-link-confirm-row .primary-button {
+  margin-top: 0;
+}
+
+.room-link-confirm-row button:not(.primary-button) {
+  flex: none;
+  padding: 10px 14px;
+  border: 1px solid #2b3748;
+  border-radius: 9px;
+  color: #8d9aac;
+  background: #111925;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.room-link-confirm-row button:not(.primary-button):hover {
+  color: #dce6f4;
   background: rgb(255 255 255 / 6%);
 }

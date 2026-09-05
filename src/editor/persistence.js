@@ -16,6 +16,18 @@ export function initPersistence(ctx) {
   // authored directly), so they're recomputed from that raw JSON here, the same way
   // the loaded branch recomputes them from live objects. Storing them as separate
   // frozen copies instead would create two sources of truth that can drift apart.
+  // Wall-opening links made in the room-link panel, independent of the older
+  // door-object-based connectedRooms above (that graph comes from placed
+  // objects; this one comes from room.doorEdges, set by ctx.buildRoomWalls).
+  function serializeDoorEdges(room) {
+    return (room.doorEdges || []).map(({ x, z, side, connectedRoomInstanceId }) => ({
+      x,
+      z,
+      side,
+      connectedRoomId: connectedRoomInstanceId != null ? `room-${connectedRoomInstanceId}` : null,
+    }));
+  }
+
   function serializeUnloadedRoom(room) {
     const savedObjects = room._savedObjects ?? [];
     const spawnItem = savedObjects.find((item) => item.isSpawnPoint);
@@ -29,6 +41,8 @@ export function initPersistence(ctx) {
       isStartRoom: room.isStartRoom,
       initialSpawnPos: spawnItem ? spawnItem.transform.position : [0, 0, 0],
       floorCells: room.floorCells ?? null,
+      doorEdges: serializeDoorEdges(room),
+      worldOffset: room.worldOffset ?? { x: 0, z: 0 },
       connectedRooms,
       objects: savedObjects,
     };
@@ -55,6 +69,8 @@ export function initPersistence(ctx) {
         isStartRoom: room.isStartRoom,
         initialSpawnPos: spawnObject ? spawnObject.position.toArray() : [0, 0, 0],
         floorCells: room.floorCells ?? null,
+        doorEdges: serializeDoorEdges(room),
+        worldOffset: room.worldOffset ?? { x: 0, z: 0 },
         connectedRooms,
         objects: roomObjects.map((object) => ({
           id: `obj-${object.userData.instanceId}`,
@@ -113,10 +129,8 @@ export function initPersistence(ctx) {
     const roomIdMap = new Map();
     ctx.rooms = savedRooms.map((savedRoom, index) => {
       const room = ctx.createRoom(savedRoom.roomName || `방${index + 1}`, Boolean(savedRoom.isStartRoom));
-      if (savedRoom.floorCells?.length) {
-        ctx.buildRoomFloor(room, savedRoom.floorCells);
-        ctx.buildRoomWalls(room, savedRoom.floorCells);
-      }
+      room.worldOffset = savedRoom.worldOffset ?? { x: 0, z: 0 };
+      if (savedRoom.floorCells?.length) ctx.buildRoomFloor(room, savedRoom.floorCells);
       // Keep the raw saved objects around so an unopened room can still be
       // round-tripped through save/restore without ever being instantiated —
       // initialSpawnPos/connectedRooms are re-derived from these, not stored separately.
@@ -124,6 +138,21 @@ export function initPersistence(ctx) {
       room._loaded = false;
       roomIdMap.set(savedRoom.id, room.instanceId);
       return room;
+    });
+
+    // Walls are built only now, in a second pass — doorEdges reference other
+    // rooms by their saved id, which roomIdMap can only resolve once every
+    // room above has been created.
+    savedRooms.forEach((savedRoom, index) => {
+      const room = ctx.rooms[index];
+      if (!savedRoom.floorCells?.length) return;
+      const doorEdges = (savedRoom.doorEdges || []).map(({ x, z, side, connectedRoomId }) => ({
+        x,
+        z,
+        side,
+        connectedRoomInstanceId: connectedRoomId ? roomIdMap.get(connectedRoomId) ?? null : null,
+      }));
+      ctx.buildRoomWalls(room, savedRoom.floorCells, doorEdges);
     });
 
     savedRooms.forEach((savedRoom, index) => {

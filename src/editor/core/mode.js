@@ -5,6 +5,20 @@ export function initMode(ctx) {
   ctx.currentMode = 'editor';
   ctx.isShiftHeld = false;
 
+  let toastHideTimer = null;
+  ctx.showCenterToast = (message, durationMs = 2600) => {
+    ctx.centerToastText.textContent = message;
+    ctx.centerToast.hidden = false;
+    ctx.centerToast.classList.remove('center-toast-out');
+    clearTimeout(toastHideTimer);
+    toastHideTimer = setTimeout(() => {
+      ctx.centerToast.classList.add('center-toast-out');
+      setTimeout(() => {
+        ctx.centerToast.hidden = true;
+      }, 200);
+    }, durationMs);
+  };
+
   ctx.updateGizmoVisibility = () => {
     const isEditor = ctx.currentMode === 'editor';
     ctx.transformControls.enabled = isEditor && !ctx.isShiftHeld;
@@ -37,6 +51,10 @@ export function initMode(ctx) {
     ctx.modeSwitch.hidden = isRoomBuilder;
     ctx.roomBuilderPanel.hidden = !isRoomBuilder;
     ctx.roomBuilderNamePanel.hidden = !isRoomBuilder;
+    ctx.roomTexturePanel.hidden = !isRoomBuilder;
+    ctx.roomLinkPanel.hidden = !isRoomBuilder;
+    if (isRoomBuilder) ctx.renderRoomLinkPanel();
+    else ctx.hideRoomLinkVisuals?.();
     ctx.character.visible = isMovement;
     ctx.destinationMarker.visible = isMovement && ctx.isMoving;
     ctx.orbitControls.enabled = isEditor || isRoomBuilder;
