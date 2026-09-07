@@ -230,23 +230,31 @@ export default function Editor({ mapId, onBack }) {
           </section>
 
           <section className="right-tab-panel" data-tab-panel="interaction" hidden>
-            <p id="interaction-empty" className="help">
-              오브젝트를 선택하면 상호작용 설정이 여기에 표시됩니다.
-            </p>
+            <div id="interaction-list-section">
+              <p className="eyebrow">이 방의 상호작용</p>
+              <p id="interaction-list-empty" className="help">
+                아직 등록된 상호작용이 없어요. 오브젝트를 선택해서 추가해 보세요.
+              </p>
+              <div id="interaction-list" className="interaction-list" />
+            </div>
 
             <div id="interaction-body" hidden>
+              <button type="button" id="interaction-back-button" className="interaction-back-button">
+                ‹ 목록으로
+              </button>
+
               <div id="interaction-none-state">
-                <button type="button" id="interaction-add-button">
+                <button type="button" id="interaction-add-button" className="interaction-add-button">
                   + 상호작용 추가
                 </button>
-                <div id="interaction-type-choices" hidden>
-                  <button type="button" data-interaction-type="memo">
+                <div id="interaction-type-choices" className="interaction-type-choices" hidden>
+                  <button type="button" className="interaction-type-choice" data-interaction-type="memo">
                     메모
                   </button>
-                  <button type="button" data-interaction-type="choice">
+                  <button type="button" className="interaction-type-choice" data-interaction-type="choice">
                     선택지
                   </button>
-                  <button type="button" data-interaction-type="image">
+                  <button type="button" className="interaction-type-choice" data-interaction-type="image">
                     이미지
                   </button>
                 </div>
@@ -254,9 +262,9 @@ export default function Editor({ mapId, onBack }) {
 
               <div id="interaction-active-state" hidden>
                 <div className="interaction-active-header">
-                  <span id="interaction-active-label" />
-                  <button type="button" id="interaction-remove-button">
-                    상호작용 삭제
+                  <span id="interaction-active-label" className="interaction-active-badge" />
+                  <button type="button" id="interaction-remove-button" className="interaction-remove-button">
+                    삭제
                   </button>
                 </div>
 
@@ -267,7 +275,7 @@ export default function Editor({ mapId, onBack }) {
 
                 <div id="interaction-choice-fields" hidden>
                   <div id="interaction-choice-list" />
-                  <button type="button" id="interaction-choice-add-button">
+                  <button type="button" id="interaction-choice-add-button" className="interaction-choice-add-button">
                     + 선택지 추가
                   </button>
                 </div>
@@ -347,25 +355,37 @@ export default function Editor({ mapId, onBack }) {
       </aside>
 
       <aside id="room-link-panel" className="sidebar sidebar-right" hidden>
-        <div className="sidebar-body sidebar-right-body">
-          <p className="eyebrow">방 연결</p>
-          <div id="room-link-list" className="room-link-list" />
+        <div className="sidebar-body sidebar-right-body room-builder-sidebar-body">
+          <div className="room-builder-room-list-section">
+            <p className="eyebrow">방 목록</p>
+            <ul id="room-builder-room-list" className="room-builder-room-list" aria-label="편집할 방 선택" />
+          </div>
 
-          <label htmlFor="room-link-target-select">연결할 방</label>
-          <select id="room-link-target-select" />
-          <button type="button" id="room-link-add-button" className="primary-button">
-            + 연결 추가
-          </button>
-          <p id="room-link-status" className="help" />
+          <div className="room-link-section">
+            <p className="eyebrow">방 연결</p>
+            <div id="room-link-list" className="room-link-list" />
 
-          <div id="room-link-confirm-row" className="room-link-confirm-row" hidden>
-            <button type="button" id="room-link-confirm-button" className="primary-button">
-              링크 확정
+            <label htmlFor="room-link-target-select">연결할 방</label>
+            <select id="room-link-target-select" />
+            <button type="button" id="room-link-add-button" className="primary-button">
+              + 연결 추가
             </button>
-            <button type="button" id="room-link-cancel-button">취소</button>
+            <p id="room-link-status" className="help" />
           </div>
         </div>
       </aside>
+
+      <div id="room-link-position-panel" className="room-builder-panel" hidden>
+        <p id="room-link-position-status" className="room-builder-status">
+          반투명 방을 드래그해서 위치를 맞추세요.
+        </p>
+        <div className="room-builder-actions">
+          <button type="button" id="room-link-cancel-button">취소</button>
+          <button type="button" id="room-link-confirm-button" className="primary-button">
+            링크 확정
+          </button>
+        </div>
+      </div>
     </>
   );
 }

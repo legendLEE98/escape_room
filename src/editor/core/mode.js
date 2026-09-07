@@ -53,8 +53,15 @@ export function initMode(ctx) {
     ctx.roomBuilderNamePanel.hidden = !isRoomBuilder;
     ctx.roomTexturePanel.hidden = !isRoomBuilder;
     ctx.roomLinkPanel.hidden = !isRoomBuilder;
-    if (isRoomBuilder) ctx.renderRoomLinkPanel();
-    else ctx.hideRoomLinkVisuals?.();
+    if (isRoomBuilder) {
+      ctx.renderRoomBuilderRoomList?.();
+      ctx.renderRoomLinkPanel();
+    } else if (isEditor) {
+      ctx.cancelDoorEdgePicking?.();
+      ctx.refreshRoomLinkGhostsForCurrentRoom?.();
+    } else {
+      ctx.hideRoomLinkVisuals?.();
+    }
     ctx.character.visible = isMovement;
     ctx.destinationMarker.visible = isMovement && ctx.isMoving;
     ctx.orbitControls.enabled = isEditor || isRoomBuilder;

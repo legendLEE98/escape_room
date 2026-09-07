@@ -182,13 +182,28 @@ label {
 }
 
 select,
-input {
+input,
+textarea {
   width: 100%;
   border: 1px solid #2b3748;
   border-radius: 9px;
   outline: none;
   color: #eaf0f8;
   background: #111925;
+}
+
+textarea {
+  padding: 10px 11px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+  border-color: #78ade7;
 }
 
 select {
@@ -870,21 +885,43 @@ kbd {
   background: rgb(255 255 255 / 6%);
 }
 
-#interaction-add-button {
-  width: 100%;
+.interaction-back-button {
+  margin-bottom: 12px;
+  padding: 6px 10px !important;
+  border: 0 !important;
+  color: #67768a !important;
+  background: transparent !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
 }
 
-#interaction-type-choices {
+.interaction-back-button:hover {
+  color: #9dcdff !important;
+  background: rgb(255 255 255 / 6%) !important;
+}
+
+.interaction-add-button {
+  width: 100%;
+  border-style: dashed !important;
+  color: #9dcdff !important;
+}
+
+.interaction-add-button:hover {
+  border-color: #78ade7 !important;
+  background: rgb(120 173 231 / 10%) !important;
+}
+
+.interaction-type-choices {
   display: flex;
   gap: 6px;
   margin-top: 8px;
 }
 
-#interaction-type-choices button {
+.interaction-type-choice {
   flex: 1;
 }
 
-#interaction-choice-add-button {
+.interaction-choice-add-button {
   width: 100%;
   margin-top: 4px;
 }
@@ -894,18 +931,31 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid #2b3748;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 4%);
 }
 
-.interaction-active-header span {
-  color: #cbd4e1;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.interaction-active-header button {
-  padding: 6px 10px;
+.interaction-active-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #07111d;
+  background: #8fc5ff;
   font-size: 11px;
+  font-weight: 800;
+}
+
+.interaction-remove-button {
+  padding: 6px 10px !important;
+  color: #ff9b9b !important;
+  font-size: 11px !important;
+}
+
+.interaction-remove-button:hover {
+  color: #ffb3b3 !important;
+  background: rgb(255 155 155 / 12%) !important;
 }
 
 .interaction-choice-row {
@@ -922,6 +972,60 @@ kbd {
 
 .interaction-choice-row input {
   margin-bottom: 0;
+}
+
+.interaction-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.interaction-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #2b3748;
+  border-radius: 8px;
+  color: #cbd4e1;
+  background: rgb(255 255 255 / 4%);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.interaction-list-row:hover {
+  border-color: #3a4a60;
+  background: #182231;
+}
+
+.interaction-list-badge {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #07111d;
+  background: #8fc5ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.interaction-list-badge-memo {
+  background: #ffd166;
+}
+
+.interaction-list-badge-choice {
+  background: #8fc5ff;
+}
+
+.interaction-list-badge-image {
+  background: #c9a0ff;
+}
+
+.interaction-list-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .room-builder-panel {
@@ -1471,6 +1575,58 @@ kbd {
 .hierarchy-context-menu-item:hover {
   color: #9dcdff;
   background: rgb(255 255 255 / 6%);
+}
+
+.room-builder-sidebar-body {
+  gap: 0;
+}
+
+.room-builder-room-list-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #2b3748;
+  overflow: hidden;
+}
+
+.room-builder-room-list {
+  flex: 1;
+  min-height: 0;
+  margin: 8px 0 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid #2b3748;
+  border-radius: 9px;
+  background: #111925;
+}
+
+.room-builder-room-list-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: #cbd4e1;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.room-builder-room-list-item:hover {
+  background: #182231;
+}
+
+.room-builder-room-list-item.is-active {
+  color: #9dcdff;
+  background: #16263a;
+}
+
+.room-link-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: 16px;
+  overflow-y: auto;
 }
 
 .room-link-list {

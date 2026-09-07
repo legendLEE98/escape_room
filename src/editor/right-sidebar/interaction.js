@@ -63,11 +63,41 @@ export function initInteraction(ctx) {
     }
   }
 
+  function renderInteractionList() {
+    ctx.interactionList.innerHTML = '';
+    const items = ctx.placedObjects.filter(
+      (object) =>
+        ctx.getObjectRoomInstanceId(object) === ctx.currentRoomInstanceId && object.userData.interactionType,
+    );
+    ctx.interactionListEmpty.hidden = items.length > 0;
+    items.forEach((object) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'interaction-list-row';
+
+      const badge = document.createElement('span');
+      const type = object.userData.interactionType;
+      badge.className = `interaction-list-badge interaction-list-badge-${type}`;
+      badge.textContent = INTERACTION_LABELS[type] || type;
+
+      const label = document.createElement('span');
+      label.className = 'interaction-list-row-label';
+      label.textContent = object.name;
+
+      row.append(badge, label);
+      row.addEventListener('click', () => ctx.selectEditorObject(object));
+      ctx.interactionList.append(row);
+    });
+  }
+
   ctx.updateInteractionFromSelection = () => {
     const count = ctx.multiSelection.size;
+    ctx.interactionListSection.hidden = count !== 0;
     ctx.interactionBody.hidden = count === 0;
-    ctx.interactionEmpty.hidden = count > 0;
-    if (count === 0) return;
+    if (count === 0) {
+      renderInteractionList();
+      return;
+    }
 
     const single = count === 1 ? ctx.selectedEditorObject : null;
     ctx.interactionTypeChoices.hidden = true;
@@ -82,6 +112,10 @@ export function initInteraction(ctx) {
 
     if (hasInteraction) renderActiveState(single);
   };
+
+  ctx.interactionBackButton.addEventListener('click', () => {
+    ctx.selectEditorObject(null);
+  });
 
   ctx.interactionAddButton.addEventListener('click', () => {
     ctx.interactionTypeChoices.hidden = !ctx.interactionTypeChoices.hidden;

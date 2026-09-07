@@ -106,6 +106,7 @@ export function initRooms(ctx) {
     }
 
     ctx.applyRoomVisibility();
+    if (ctx.currentMode === 'editor') ctx.refreshRoomLinkGhostsForCurrentRoom?.();
     ctx.updateInspectorFromSelection();
     ctx.syncHierarchy();
   };

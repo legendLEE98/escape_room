@@ -7,6 +7,7 @@ import { initMovement } from './core/movement.js';
 import { initSelectionOutline } from './core/selection-outline.js';
 import { initGravity } from './core/gravity.js';
 import { initRooms } from './right-sidebar/rooms.js';
+import { initRoomDoors } from './core/room-doors.js';
 import { initRoomBuilder } from './core/room-builder.js';
 import { initRoomLinks } from './right-sidebar/room-links.js';
 import { initAssetCatalog } from './assets/catalog.js';
@@ -48,6 +49,7 @@ export function createScene(canvas, mapId) {
   initPlacement(ctx);
   initAssetPreview(ctx);
   initAssetBrowser(ctx);
+  initRoomDoors(ctx);
   initRoomBuilder(ctx);
   initRoomLinks(ctx);
   initHierarchy(ctx);

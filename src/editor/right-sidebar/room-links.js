@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { normalizeAsset } from '../assets/catalog.js';
 
 // Midpoint of a boundary edge in world space, matching the cell/side
 // convention from room-builder.js's computeBoundaryEdges (N/S run along
@@ -53,6 +54,10 @@ const GHOST_FLOOR_COLOR = 0x8fc5ff;
 const GHOST_WALL_COLOR = 0x8fc5ff;
 
 export function initRoomLinks(ctx) {
+  // Exposed so room-builder.js can also block a floor-redraw that would push
+  // a room into cells a linked neighbor already occupies in shared world
+  // space — the same check used here when confirming a brand new link.
+  ctx.cellsOverlap = cellsOverlap;
   ctx.isPickingDoorEdge = false;
   ctx.isPositioningGhost = false;
   let pickingTargetRoomInstanceId = null;
@@ -75,14 +80,48 @@ export function initRoomLinks(ctx) {
     side: THREE.DoubleSide,
   });
 
+  // Wall-picking navigator: every pickable (non-door) boundary edge shown in
+  // red while choosing which wall to put a door on, so it's clear where you
+  // can click — plus a single green highlight that follows the cursor to
+  // whichever edge is currently under it.
+  const wallNavigatorGroup = new THREE.Group();
+  ctx.scene.add(wallNavigatorGroup);
+  const wallNavigatorMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff6b6b,
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+  });
+  const hoverEdgeMesh = new THREE.Mesh(
+    highlightGeometry,
+    new THREE.MeshBasicMaterial({
+      color: 0x4ade80,
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      depthTest: false,
+    }),
+  );
+  hoverEdgeMesh.rotation.x = -Math.PI / 2;
+  hoverEdgeMesh.renderOrder = 6;
+  hoverEdgeMesh.visible = false;
+  ctx.scene.add(hoverEdgeMesh);
+
   // Non-interactive: every room already linked to the one being edited,
   // shown translucent for reference every time you open that room.
   const linkedGhostsGroup = new THREE.Group();
   ctx.scene.add(linkedGhostsGroup);
   // Interactive: the one target room being dragged into place right now,
-  // while confirming a brand new link.
+  // while confirming a brand new link. Split into two children so dragging
+  // (every pointermove) only has to redo the cheap procedural floor/wall
+  // part — the furniture is loaded once per target room and just moved.
   const activeGhostGroup = new THREE.Group();
   ctx.scene.add(activeGhostGroup);
+  const activeFloorWallGroup = new THREE.Group();
+  activeGhostGroup.add(activeFloorWallGroup);
+  const activeFurnitureGroup = new THREE.Group();
+  activeGhostGroup.add(activeFurnitureGroup);
+  let furnitureLoadToken = 0;
 
   function currentEditingRoom() {
     return ctx.rooms?.find((room) => room.instanceId === ctx.editingRoomInstanceId) || null;
@@ -127,17 +166,107 @@ export function initRoomLinks(ctx) {
     return group;
   }
 
+  // Reads whatever furniture data is available for a room, whichever source
+  // is authoritative right now: live objects if it's currently loaded (may
+  // include edits not saved yet), otherwise the last-saved raw JSON.
+  function readRoomFurnitureItems(room) {
+    if (room._loaded) {
+      return ctx.placedObjects
+        .filter(
+          (object) =>
+            ctx.getObjectRoomInstanceId(object) === room.instanceId &&
+            object.userData.assetFile &&
+            !object.userData.isSpawnPoint,
+        )
+        .map((object) => ({
+          file: object.userData.assetFile,
+          position: object.position.toArray(),
+          rotation: object.rotation.toArray(),
+          scale: object.scale.toArray(),
+        }));
+    }
+    return (room._savedObjects || [])
+      .filter((item) => item.glbUrl && !item.isSpawnPoint)
+      .map((item) => ({
+        url: item.glbUrl,
+        position: item.transform.position,
+        rotation: item.transform.rotation,
+        scale: item.transform.scale,
+      }));
+  }
+
+  // Loads and clones every placed asset in a room so the ghost shows its
+  // actual layout (desks, cabinets, ...), not just a bare floor outline.
+  // Async — GLBs are cached by ctx.loadAssetTemplate after the first load.
+  async function buildGhostFurnitureGroup(room, opacity) {
+    const group = new THREE.Group();
+    const ghostMaterial = new THREE.MeshBasicMaterial({
+      color: GHOST_WALL_COLOR,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+    });
+
+    await Promise.all(
+      readRoomFurnitureItems(room).map(async (item) => {
+        const asset = item.file
+          ? ctx.assetCatalog.find((candidate) => candidate.file === item.file)
+          : ctx.assetCatalog.find((candidate) => candidate.url === item.url);
+        if (!asset) return;
+        try {
+          const template = await ctx.loadAssetTemplate(asset);
+          const content = template.clone(true);
+          // The saved position/rotation/scale was recorded for a *placed*
+          // (ctx.addAsset) object, which normalizeAsset() has already
+          // re-centered — applying that saved transform straight onto the
+          // raw un-normalized template lands it wherever the original GLB's
+          // own arbitrary origin happens to be, often far outside view.
+          normalizeAsset(content);
+          content.traverse((child) => {
+            if (child.isMesh) child.material = ghostMaterial;
+          });
+          const wrapper = new THREE.Group();
+          wrapper.add(content);
+          wrapper.position.fromArray(item.position);
+          wrapper.rotation.fromArray(item.rotation);
+          wrapper.scale.fromArray(item.scale);
+          group.add(wrapper);
+        } catch {
+          // A single failed/missing asset shouldn't break the whole preview.
+        }
+      }),
+    );
+
+    return group;
+  }
+
   // Redraws the permanent, non-interactive ghosts for every room already
   // linked to the one currently being edited.
   function renderLinkedGhosts(room) {
     linkedGhostsGroup.clear();
     if (!room) return;
+    // Defensive: draw each linked room's ghost at most once even if the
+    // data somehow has more than one door to it (e.g. leftover from before
+    // renderTargetOptions started blocking duplicate links) — otherwise two
+    // identical ghosts land on the exact same spot and z-fight.
+    const renderedRoomIds = new Set();
     (room.doorEdges || []).forEach((edge) => {
+      if (renderedRoomIds.has(edge.connectedRoomInstanceId)) return;
       const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
       if (!targetRoom) return;
+      renderedRoomIds.add(edge.connectedRoomInstanceId);
       const offsetX = (targetRoom.worldOffset?.x ?? 0) - (room.worldOffset?.x ?? 0);
       const offsetZ = (targetRoom.worldOffset?.z ?? 0) - (room.worldOffset?.z ?? 0);
       linkedGhostsGroup.add(buildGhostRoomMeshes(targetRoom, offsetX, offsetZ, 0.28));
+
+      const furnitureGroup = new THREE.Group();
+      furnitureGroup.position.set(offsetX, 0, offsetZ);
+      linkedGhostsGroup.add(furnitureGroup);
+      buildGhostFurnitureGroup(targetRoom, 0.3).then((loaded) => {
+        // The room being edited may have changed by the time this resolves.
+        if (currentEditingRoom() !== room) return;
+        furnitureGroup.add(loaded);
+      });
     });
   }
 
@@ -171,6 +300,27 @@ export function initRoomLinks(ctx) {
       }
     });
     return nearest && nearestDistSq < EDGE_PICK_RADIUS * EDGE_PICK_RADIUS ? nearest : null;
+  }
+
+  function renderWallNavigator(room, cells) {
+    wallNavigatorGroup.clear();
+    if (!room) return;
+    const doorSet = new Set((room.doorEdges || []).map(({ x, z, side }) => ctx.edgeKey(x, z, side)));
+    ctx.computeBoundaryEdges(cells).forEach((edge) => {
+      if (doorSet.has(ctx.edgeKey(edge.x, edge.z, edge.side))) return; // already a door, shown green elsewhere
+      const { x, z } = edgeMidpoint(edge);
+      const mesh = new THREE.Mesh(highlightGeometry, wallNavigatorMaterial);
+      mesh.rotation.x = -Math.PI / 2;
+      if (edge.side === 'W' || edge.side === 'E') mesh.rotation.z = Math.PI / 2;
+      mesh.position.set(x, 0.028, z);
+      wallNavigatorGroup.add(mesh);
+    });
+  }
+
+  function clearWallNavigator() {
+    wallNavigatorGroup.clear();
+    hoverEdgeMesh.visible = false;
+    ctx.canvas.style.cursor = '';
   }
 
   function renderLinkList(room) {
@@ -218,8 +368,13 @@ export function initRoomLinks(ctx) {
       ctx.roomLinkAddButton.disabled = true;
       return;
     }
+    // A room already linked can't be picked again — a second door to the
+    // same room would render its ghost twice at the identical position
+    // (perfectly overlapping, z-fighting) and doesn't mean anything extra
+    // anyway, since the link itself is what matters, not which wall.
+    const alreadyLinkedIds = new Set((room.doorEdges || []).map((edge) => edge.connectedRoomInstanceId));
     ctx.rooms
-      .filter((candidate) => candidate.instanceId !== room.instanceId)
+      .filter((candidate) => candidate.instanceId !== room.instanceId && !alreadyLinkedIds.has(candidate.instanceId))
       .forEach((candidate) => {
         const option = document.createElement('option');
         option.value = String(candidate.instanceId);
@@ -230,8 +385,12 @@ export function initRoomLinks(ctx) {
   }
 
   ctx.cancelDoorEdgePicking = () => {
-    activeGhostGroup.clear();
-    ctx.roomLinkConfirmRow.hidden = true;
+    activeFloorWallGroup.clear();
+    activeFurnitureGroup.clear();
+    furnitureLoadToken += 1; // invalidate any in-flight furniture load
+    clearWallNavigator();
+    ctx.roomLinkPositionPanel.hidden = true;
+    if (ctx.currentMode === 'roomBuilder') ctx.roomBuilderPanel.hidden = false;
     if (ctx.isPickingDoorEdge) {
       ctx.isPickingDoorEdge = false;
       pickingTargetRoomInstanceId = null;
@@ -259,6 +418,20 @@ export function initRoomLinks(ctx) {
     highlightGroup.clear();
   };
 
+  // Editor mode reuses the same ghost/door-highlight rendering as room-builder
+  // mode, just keyed off the currently viewed room (ctx.currentRoomInstanceId)
+  // instead of the room being actively edited.
+  ctx.refreshRoomLinkGhostsForCurrentRoom = () => {
+    const room = ctx.rooms?.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    if (!room) {
+      linkedGhostsGroup.clear();
+      highlightGroup.clear();
+      return;
+    }
+    renderDoorEdgeHighlights(room);
+    renderLinkedGhosts(room);
+  };
+
   ctx.renderRoomLinkPanel = () => {
     const room = currentEditingRoom();
     ctx.cancelDoorEdgePicking();
@@ -276,6 +449,7 @@ export function initRoomLinks(ctx) {
     if (!room || !ctx.roomLinkTargetSelect.value) return;
     pickingTargetRoomInstanceId = Number(ctx.roomLinkTargetSelect.value);
     ctx.isPickingDoorEdge = true;
+    renderWallNavigator(room, Array.from(ctx.roomDraftCells.values()));
     ctx.roomLinkStatus.textContent = '문을 놓을 벽을 클릭하세요 (Esc로 취소)';
   });
 
@@ -297,16 +471,27 @@ export function initRoomLinks(ctx) {
       pickedEdge = edge;
       ctx.isPickingDoorEdge = false;
       ctx.isPositioningGhost = true;
+      clearWallNavigator();
       addEdgeHighlight(edge);
       const { x, z } = edgeMidpoint(edge);
       const normal =
         edge.side === 'N' ? { x: 0, z: -1 } : edge.side === 'S' ? { x: 0, z: 1 } : edge.side === 'W' ? { x: -1, z: 0 } : { x: 1, z: 0 };
       ghostOffset = { x: Math.round(x + normal.x - 0.5), z: Math.round(z + normal.z - 0.5) };
-      activeGhostGroup.clear();
+      activeFloorWallGroup.clear();
+      activeFurnitureGroup.clear();
       const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === pickingTargetRoomInstanceId);
-      if (targetRoom) activeGhostGroup.add(buildGhostRoomMeshes(targetRoom, ghostOffset.x, ghostOffset.z, 0.5));
-      ctx.roomLinkConfirmRow.hidden = false;
-      ctx.roomLinkStatus.textContent = '반투명 방을 드래그해서 위치를 맞추고 "링크 확정"을 누르세요 (Esc로 취소)';
+      if (targetRoom) {
+        activeFloorWallGroup.add(buildGhostRoomMeshes(targetRoom, ghostOffset.x, ghostOffset.z, 0.5));
+        activeFurnitureGroup.position.set(ghostOffset.x, 0, ghostOffset.z);
+        const token = ++furnitureLoadToken;
+        buildGhostFurnitureGroup(targetRoom, 0.5).then((loaded) => {
+          if (token !== furnitureLoadToken) return; // a newer pick/cancel happened meanwhile
+          activeFurnitureGroup.add(loaded);
+        });
+      }
+      ctx.roomBuilderPanel.hidden = true;
+      ctx.roomLinkPositionPanel.hidden = false;
+      ctx.roomLinkPositionStatus.textContent = '반투명 방을 드래그해서 위치를 맞추고 "링크 확정"을 누르세요 (Esc로 취소)';
       return;
     }
 
@@ -318,6 +503,22 @@ export function initRoomLinks(ctx) {
     }
   });
 
+  ctx.canvas.addEventListener('pointermove', (event) => {
+    if (ctx.currentMode !== 'roomBuilder' || !ctx.isPickingDoorEdge) return;
+    const cells = Array.from(ctx.roomDraftCells.values());
+    const edge = findNearestEdge(event, cells);
+    if (!edge) {
+      hoverEdgeMesh.visible = false;
+      ctx.canvas.style.cursor = '';
+      return;
+    }
+    const { x, z } = edgeMidpoint(edge);
+    hoverEdgeMesh.position.set(x, 0.032, z);
+    hoverEdgeMesh.rotation.z = edge.side === 'W' || edge.side === 'E' ? Math.PI / 2 : 0;
+    hoverEdgeMesh.visible = true;
+    ctx.canvas.style.cursor = 'pointer';
+  });
+
   window.addEventListener('pointermove', (event) => {
     if (!isDraggingGhost || ctx.currentMode !== 'roomBuilder') return;
     ctx.setPointer(event);
@@ -327,8 +528,9 @@ export function initRoomLinks(ctx) {
     ghostOffset = { x: Math.round(rawX), z: Math.round(rawZ) };
 
     const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === pickingTargetRoomInstanceId);
-    activeGhostGroup.clear();
-    if (targetRoom) activeGhostGroup.add(buildGhostRoomMeshes(targetRoom, ghostOffset.x, ghostOffset.z, 0.5));
+    activeFloorWallGroup.clear();
+    if (targetRoom) activeFloorWallGroup.add(buildGhostRoomMeshes(targetRoom, ghostOffset.x, ghostOffset.z, 0.5));
+    activeFurnitureGroup.position.set(ghostOffset.x, 0, ghostOffset.z);
   });
 
   window.addEventListener('pointerup', () => {
@@ -339,6 +541,19 @@ export function initRoomLinks(ctx) {
     const room = currentEditingRoom();
     const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === pickingTargetRoomInstanceId);
     if (!room || !targetRoom || !pickedEdge) return;
+
+    // Hard guard, independent of whether the dropdown happened to still be
+    // showing this room as an option — the dropdown is just UI, this is the
+    // actual rule: a room can only be linked to another room once.
+    const alreadyLinked = (room.doorEdges || []).some(
+      (edge) => edge.connectedRoomInstanceId === targetRoom.instanceId,
+    );
+    if (alreadyLinked) {
+      ctx.showCenterToast(`"${targetRoom.name}"은(는) 이미 연결되어 있어요.`);
+      ctx.cancelDoorEdgePicking();
+      renderTargetOptions(room);
+      return;
+    }
 
     const cells = Array.from(ctx.roomDraftCells.values());
     if (cellsOverlap(cells, targetRoom.floorCells || [], ghostOffset.x, ghostOffset.z)) {
@@ -370,6 +585,7 @@ export function initRoomLinks(ctx) {
 
     ctx.cancelDoorEdgePicking();
     renderLinkList(room);
+    renderTargetOptions(room);
     renderDoorEdgeHighlights(room);
     renderLinkedGhosts(room);
     ctx.saveLayout();

@@ -4,6 +4,10 @@ const FLOOR_COLOR = 0x8a7257;
 const WALL_COLOR = 0x9a9a9a; // placeholder — swap for a real material/texture later
 const WALL_HEIGHT = 2;
 const WALL_THICKNESS = 0.15;
+// Measured from door/wood-door.glb's DoorFrame node (local Y spans 0..1.8024)
+// — the sliver between this and WALL_HEIGHT gets its own short wall segment
+// (a lintel) above each door opening instead of being left as a gap.
+const DOOR_FRAME_HEIGHT = 1.8;
 const CELL_HIGHLIGHT_COLOR = 0x8fc5ff;
 const PENDING_ADD_COLOR = 0xffd166;
 const PENDING_REMOVE_COLOR = 0xff6b6b;
@@ -238,23 +242,65 @@ export function initRoomBuilder(ctx) {
   ctx.wallHeight = WALL_HEIGHT;
 
   ctx.buildRoomWalls = (room, cells, doorEdges = []) => {
+    // Rebuilding replaces both the wall geometry and whatever door models
+    // were sitting in their openings — without this, repeated calls (editing
+    // the floor, linking/unlinking a door) would each add another group on
+    // top of the last instead of replacing it.
+    const existingWalls = room.root.children.find((child) => child.userData.isRoomWalls);
+    if (existingWalls) room.root.remove(existingWalls);
+    const existingDoors = room.root.children.find((child) => child.userData.isRoomDoors);
+    if (existingDoors) room.root.remove(existingDoors);
+
     const wallGroup = new THREE.Group();
     wallGroup.userData.isRoomWalls = true;
 
-    const addWall = (geometry, x, z) => {
+    const createWallMesh = (geometry) => {
       // Each wall gets its own material instance (not shared) so
       // updateWallOcclusion can fade individual segments independently.
       const material = new THREE.MeshStandardMaterial({ color: WALL_COLOR, roughness: 0.9, transparent: true });
       const wall = new THREE.Mesh(geometry, material);
-      wall.position.set(x, WALL_HEIGHT / 2, z);
+      // Thin (0.15-unit) box geometry self-shadows badly under the shadow
+      // map's precision — shows up as a dithered/hatched moiré pattern on
+      // the wall face, especially near corners where two walls sit close
+      // together. receiveShadow off avoids that. castShadow stays ON,
+      // though — otherwise the wall doesn't occlude the shadow map at all,
+      // so light (and other objects' shadows) passes straight through it
+      // onto whatever floor is on the other side.
       wall.castShadow = true;
-      wall.receiveShadow = true;
+      wall.receiveShadow = false;
+      return wall;
+    };
+
+    const addWall = (geometry, x, z) => {
+      const wall = createWallMesh(geometry);
+      wall.position.set(x, WALL_HEIGHT / 2, z);
       wallGroup.add(wall);
     };
 
-    // Door edges get no wall segment at all — they're a plain opening in the
-    // perimeter (no lock/key state yet; that belongs to a separate object
-    // placed in the opening later, same as any other interactable).
+    const addWallAt = (geometry, x, y, z) => {
+      const wall = createWallMesh(geometry);
+      wall.position.set(x, y, z);
+      wallGroup.add(wall);
+    };
+
+    // Door edges get no full-height wall segment — the opening is filled by
+    // an actual door model (see ctx.buildRoomDoors below) instead. The strip
+    // above the door frame's height still needs a wall, though, so it
+    // doesn't just show as a hole up to the ceiling.
+    const lintelHeight = WALL_HEIGHT - DOOR_FRAME_HEIGHT;
+    if (lintelHeight > 0) {
+      doorEdges.forEach((edge) => {
+        const { x, z, side } = edge;
+        const isHorizontal = side === 'N' || side === 'S';
+        const geometry = isHorizontal
+          ? new THREE.BoxGeometry(1, lintelHeight, WALL_THICKNESS)
+          : new THREE.BoxGeometry(WALL_THICKNESS, lintelHeight, 1);
+        const cx = isHorizontal ? x + 0.5 : side === 'W' ? x : x + 1;
+        const cz = isHorizontal ? (side === 'N' ? z : z + 1) : z + 0.5;
+        addWallAt(geometry, cx, DOOR_FRAME_HEIGHT + lintelHeight / 2, cz);
+      });
+    }
+
     const doorEdgeSet = new Set(doorEdges.map(({ x, z, side }) => edgeKey(x, z, side)));
     const boundaryEdges = computeBoundaryEdges(cells).filter(
       ({ x, z, side }) => !doorEdgeSet.has(edgeKey(x, z, side)),
@@ -324,6 +370,7 @@ export function initRoomBuilder(ctx) {
 
     room.root.add(wallGroup);
     room.doorEdges = doorEdges;
+    ctx.buildRoomDoors(room, doorEdges);
   };
 
   const WALL_OCCLUDED_OPACITY = 0;
@@ -416,6 +463,36 @@ export function initRoomBuilder(ctx) {
     ctx.updateRoomBuilderStatus();
   };
 
+  // Lets you hop to a different room's floor/wall draft without leaving
+  // room-builder mode. Keyed off ctx.currentRoomInstanceId — the same field
+  // the editor-mode hierarchy dropdown (ctx.selectRoom) writes to — so both
+  // pickers always agree on which room is "current."
+  ctx.switchRoomBuilderRoom = async (room) => {
+    if (!room || room.instanceId === ctx.currentRoomInstanceId) return;
+    ctx.currentRoomInstanceId = room.instanceId;
+    // startRoomEditor doesn't touch room visibility on its own — it assumes
+    // whatever room was already visible (set by applyRoomVisibility back in
+    // editor mode) is the one it's now editing, which was always true before
+    // this in-place switch existed. Without this call the previously edited
+    // room's root (floor/walls/furniture) stays visible and overlaps the new
+    // one's draft.
+    ctx.applyRoomVisibility();
+    if (!room._loaded) await ctx.loadRoomContents(room);
+    ctx.startRoomEditor();
+  };
+
+  ctx.renderRoomBuilderRoomList = () => {
+    ctx.roomBuilderRoomList.innerHTML = '';
+    ctx.rooms.forEach((room) => {
+      const item = document.createElement('li');
+      item.className = 'room-builder-room-list-item';
+      item.classList.toggle('is-active', room.instanceId === ctx.currentRoomInstanceId);
+      item.textContent = room.name;
+      item.addEventListener('click', () => ctx.switchRoomBuilderRoom(room));
+      ctx.roomBuilderRoomList.append(item);
+    });
+  };
+
   ctx.cancelRoomBuilder = () => {
     ctx.editingRoomInstanceId = null;
     clearDraft();
@@ -432,15 +509,50 @@ export function initRoomBuilder(ctx) {
         ? ctx.rooms.find((candidate) => candidate.instanceId === ctx.editingRoomInstanceId)
         : null;
 
+    const previousDoorEdges = editingRoom?.doorEdges || [];
+    const editingWorldOffset = editingRoom?.worldOffset ?? { x: 0, z: 0 };
+
+    // Redrawing the floor can extend it into cells a linked neighbor already
+    // occupies in shared world space — the door edge would still "connect"
+    // the two rooms, but they'd render stacked on top of each other. Block
+    // the edit instead of silently producing that overlap (same check used
+    // in room-links.js when a brand new link is first confirmed).
+    const overlapsLinkedRoom = previousDoorEdges.some((edge) => {
+      const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+      if (!targetRoom) return false;
+      const offsetX = (targetRoom.worldOffset?.x ?? 0) - editingWorldOffset.x;
+      const offsetZ = (targetRoom.worldOffset?.z ?? 0) - editingWorldOffset.z;
+      return ctx.cellsOverlap(cells, targetRoom.floorCells || [], offsetX, offsetZ);
+    });
+    if (overlapsLinkedRoom) {
+      ctx.showCenterToast('연결된 방과 바닥이 겹쳐요. 겹치는 칸을 지워주세요.');
+      return;
+    }
+
+    // Erasing the cell a door edge sits on (or otherwise reshaping the floor
+    // so that edge falls off the new perimeter) used to silently drop the
+    // edge — the door just vanished with no warning, and the connected
+    // room's matching entry was left dangling since only this room's list
+    // got filtered. Block it instead, the same way an overlap is blocked,
+    // and point at the proper way to remove a door (the 방 연결 panel's
+    // delete button, which cleans up both sides).
+    const newBoundaryKeys = new Set(
+      computeBoundaryEdges(cells).map(({ x, z, side }) => edgeKey(x, z, side)),
+    );
+    const wouldDropDoorEdge = previousDoorEdges.some(
+      ({ x, z, side }) => !newBoundaryKeys.has(edgeKey(x, z, side)),
+    );
+    if (wouldDropDoorEdge) {
+      ctx.showCenterToast('문이 있는 칸의 모양은 바꿀 수 없어요. 먼저 방 연결을 삭제해주세요.');
+      return;
+    }
+
     let room;
-    let previousDoorEdges = [];
     if (editingRoom) {
       room = editingRoom;
-      previousDoorEdges = room.doorEdges || [];
       const oldFloor = room.root.children.find((child) => child.userData.isRoomFloor);
       if (oldFloor) room.root.remove(oldFloor);
-      const oldWalls = room.root.children.find((child) => child.userData.isRoomWalls);
-      if (oldWalls) room.root.remove(oldWalls);
+      // Old walls/doors are removed by buildRoomWalls itself now.
       room.name = name;
       room.root.name = name;
     } else {
@@ -448,15 +560,9 @@ export function initRoomBuilder(ctx) {
       ctx.rooms.push(room);
     }
 
-    // Redrawing the floor can shrink/reshape it, so an old door edge may no
-    // longer sit on the perimeter — drop any that don't, rather than leaving
-    // a dangling link with no matching wall gap to render it at.
-    const newBoundaryKeys = new Set(
-      computeBoundaryEdges(cells).map(({ x, z, side }) => edgeKey(x, z, side)),
-    );
-    const doorEdges = previousDoorEdges.filter(({ x, z, side }) =>
-      newBoundaryKeys.has(edgeKey(x, z, side)),
-    );
+    // wouldDropDoorEdge above already guarantees every entry in
+    // previousDoorEdges still sits on the new perimeter.
+    const doorEdges = previousDoorEdges;
 
     ctx.buildRoomFloor(room, cells);
     ctx.buildRoomWalls(room, cells, doorEdges);
