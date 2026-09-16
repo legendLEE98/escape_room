@@ -1,15 +1,6 @@
 import * as THREE from 'three';
 import { normalizeAsset } from '../assets/catalog.js';
-
-// Midpoint of a boundary edge in world space, matching the cell/side
-// convention from room-builder.js's computeBoundaryEdges (N/S run along
-// fixed z, W/E run along fixed x).
-function edgeMidpoint({ x, z, side }) {
-  if (side === 'N') return { x: x + 0.5, z };
-  if (side === 'S') return { x: x + 0.5, z: z + 1 };
-  if (side === 'W') return { x, z: z + 0.5 };
-  return { x: x + 1, z: z + 0.5 }; // E
-}
+import { edgeMidpoint } from '../core/room-doors.js';
 
 // Given a wall edge on the "anchor" room and a candidate offset for the
 // "other" room (in the anchor room's local frame), finds the cell+side on
@@ -58,6 +49,38 @@ export function initRoomLinks(ctx) {
   // a room into cells a linked neighbor already occupies in shared world
   // space — the same check used here when confirming a brand new link.
   ctx.cellsOverlap = cellsOverlap;
+
+  // Finds the other side's edge for the same physical door. Prefers
+  // matching by doorId (assigned once at link creation, identical on both
+  // sides, globally unique — see ctx.roomLinkConfirmButton below) since
+  // that's unambiguous even if a room pair ever has more than one door
+  // between them. Falls back to "the one edge in targetRoom pointing back
+  // to this room" for edges saved before doorId existed, which only works
+  // because room-links.js still only allows one door per room pair.
+  function findMirrorEdge(room, targetRoom, edge) {
+    const edges = targetRoom.doorEdges || [];
+    if (edge.doorId) {
+      const byId = edges.find((candidate) => candidate.doorId === edge.doorId);
+      if (byId) return byId;
+    }
+    return edges.find((candidate) => candidate.connectedRoomInstanceId === room.instanceId) || null;
+  }
+  ctx.findDoorMirrorEdge = findMirrorEdge;
+
+  // A door is one physical object, but it's stored as two independent edge
+  // records (one per room, each with its own x/z/side in that room's local
+  // frame). Lock state should still be a single shared thing, though — a
+  // door isn't unlocked from one side and locked from the other — so both
+  // directions resolve to the same "canonical" edge (deterministically
+  // whichever room has the smaller instanceId) for every lockType/password/
+  // requiredButtonInstanceId read or write. The non-canonical edge's own
+  // copies of those fields are simply never touched again.
+  ctx.resolveCanonicalDoorEdge = (room, edge) => {
+    const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+    if (!targetRoom || room.instanceId <= targetRoom.instanceId) return { room, edge };
+    const mirror = findMirrorEdge(room, targetRoom, edge);
+    return mirror ? { room: targetRoom, edge: mirror } : { room, edge };
+  };
   ctx.isPickingDoorEdge = false;
   ctx.isPositioningGhost = false;
   let pickingTargetRoomInstanceId = null;
@@ -123,6 +146,29 @@ export function initRoomLinks(ctx) {
   activeGhostGroup.add(activeFurnitureGroup);
   let furnitureLoadToken = 0;
 
+  // BFS over already-confirmed doorEdges — true if targetRoom is reachable
+  // from anchorRoom through any chain of existing links (not just a direct
+  // one). Rooms can legitimately form a loop (안방-거실-복도-안방 as an actual
+  // ring layout), but the loop-closing link has to land targetRoom exactly
+  // where the rest of the graph already puts it — see the worldOffset check
+  // at the confirm handler below.
+  function areRoomsConnected(anchorRoom, targetRoom) {
+    const visited = new Set([anchorRoom.instanceId]);
+    const queue = [anchorRoom];
+    while (queue.length) {
+      const current = queue.shift();
+      if (current.instanceId === targetRoom.instanceId) return true;
+      (current.doorEdges || []).forEach((edge) => {
+        if (edge.connectedRoomInstanceId == null || visited.has(edge.connectedRoomInstanceId)) return;
+        const neighbor = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+        if (!neighbor) return;
+        visited.add(neighbor.instanceId);
+        queue.push(neighbor);
+      });
+    }
+    return false;
+  }
+
   function currentEditingRoom() {
     return ctx.rooms?.find((room) => room.instanceId === ctx.editingRoomInstanceId) || null;
   }
@@ -142,6 +188,11 @@ export function initRoomLinks(ctx) {
       const mesh = new THREE.Mesh(floorGeometry, floorMaterial);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(x + 0.5 + offsetX, 0.012, z + 0.5 + offsetZ);
+      // A ghost is a reference overlay, not real geometry — it must never
+      // cast or receive a shadow (would show as a shadow with no visible
+      // caster once the ghost's own near-invisible material fades it out).
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       group.add(mesh);
     });
 
@@ -160,6 +211,8 @@ export function initRoomLinks(ctx) {
       const mesh = new THREE.Mesh(wallGeometry, wallMaterial);
       mesh.position.set(x + offsetX, ctx.wallHeight / 2, z + offsetZ);
       if (edge.side === 'W' || edge.side === 'E') mesh.rotation.y = Math.PI / 2;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       group.add(mesh);
     });
 
@@ -223,7 +276,13 @@ export function initRoomLinks(ctx) {
           // own arbitrary origin happens to be, often far outside view.
           normalizeAsset(content);
           content.traverse((child) => {
-            if (child.isMesh) child.material = ghostMaterial;
+            if (!child.isMesh) return;
+            child.material = ghostMaterial;
+            // Same reasoning as buildGhostRoomMeshes — a ghost must never
+            // cast/receive a shadow, or its shadow renders as if the (barely
+            // visible) ghost furniture were solid.
+            child.castShadow = false;
+            child.receiveShadow = false;
           });
           const wrapper = new THREE.Group();
           wrapper.add(content);
@@ -555,6 +614,20 @@ export function initRoomLinks(ctx) {
       return;
     }
 
+    // A ring layout (안방-거실-복도-안방) is valid, but the closing link has to
+    // agree with where the rest of the graph already placed the target room
+    // — otherwise its worldOffset would mean two different things depending
+    // on which path you trace, silently corrupting one of them.
+    const alreadyConnected = areRoomsConnected(room, targetRoom);
+    if (alreadyConnected) {
+      const impliedOffsetX = (targetRoom.worldOffset?.x ?? 0) - (room.worldOffset?.x ?? 0);
+      const impliedOffsetZ = (targetRoom.worldOffset?.z ?? 0) - (room.worldOffset?.z ?? 0);
+      if (impliedOffsetX !== ghostOffset.x || impliedOffsetZ !== ghostOffset.z) {
+        ctx.showCenterToast('이미 다른 경로로 연결된 방이에요. 기존 위치와 어긋나서 이 자리엔 연결할 수 없어요.');
+        return;
+      }
+    }
+
     const cells = Array.from(ctx.roomDraftCells.values());
     if (cellsOverlap(cells, targetRoom.floorCells || [], ghostOffset.x, ghostOffset.z)) {
       ctx.showCenterToast('두 방의 칸이 겹쳐서 확정할 수 없어요. 위치를 조정해 주세요.');
@@ -567,18 +640,28 @@ export function initRoomLinks(ctx) {
       return;
     }
 
+    // Shared by both sides so they can find each other unambiguously (see
+    // findMirrorEdge above) instead of inferring it from "the only edge
+    // pointing at that room" — the latter breaks the moment a room pair
+    // ever has more than one door between them.
+    const doorId = crypto.randomUUID();
+
     const nextDoorEdges = (room.doorEdges || []).filter(
       (existing) => ctx.edgeKey(existing.x, existing.z, existing.side) !== ctx.edgeKey(pickedEdge.x, pickedEdge.z, pickedEdge.side),
     );
-    nextDoorEdges.push({ ...pickedEdge, connectedRoomInstanceId: targetRoom.instanceId });
+    nextDoorEdges.push({ ...pickedEdge, connectedRoomInstanceId: targetRoom.instanceId, doorId });
 
     const targetNextDoorEdges = (targetRoom.doorEdges || []).filter(
       (existing) => ctx.edgeKey(existing.x, existing.z, existing.side) !== ctx.edgeKey(matchedEdge.x, matchedEdge.z, matchedEdge.side),
     );
-    targetNextDoorEdges.push({ ...matchedEdge, connectedRoomInstanceId: room.instanceId });
+    targetNextDoorEdges.push({ ...matchedEdge, connectedRoomInstanceId: room.instanceId, doorId });
 
     room.worldOffset = room.worldOffset ?? { x: 0, z: 0 };
-    targetRoom.worldOffset = { x: room.worldOffset.x + ghostOffset.x, z: room.worldOffset.z + ghostOffset.z };
+    // Already validated consistent above when alreadyConnected — no need to
+    // touch targetRoom's worldOffset again in that case.
+    if (!alreadyConnected) {
+      targetRoom.worldOffset = { x: room.worldOffset.x + ghostOffset.x, z: room.worldOffset.z + ghostOffset.z };
+    }
 
     ctx.buildRoomWalls(room, cells, nextDoorEdges);
     if (targetRoom.floorCells) ctx.buildRoomWalls(targetRoom, targetRoom.floorCells, targetNextDoorEdges);

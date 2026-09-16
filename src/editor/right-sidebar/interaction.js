@@ -2,9 +2,78 @@ const INTERACTION_LABELS = {
   memo: '메모',
   choice: '선택지',
   image: '이미지',
+  button: '버튼',
 };
 
 export function initInteraction(ctx) {
+  // Not a normal placed object (not in ctx.placedObjects, not selectable in
+  // the 3D view yet), so it gets its own lightweight selection state instead
+  // of going through ctx.selectEditorObject/transformControls: { room, edge }
+  // where edge is the live doorEdge object from room.doorEdges (mutating it
+  // directly is fine, it's the same reference persistence.js serializes).
+  ctx.selectedDoorEdge = null;
+
+  function renderButtonOptions(room, edge) {
+    ctx.interactionLockButtonSelect.innerHTML = '';
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = '버튼 선택...';
+    ctx.interactionLockButtonSelect.append(emptyOption);
+
+    ctx.placedObjects
+      .filter(
+        (object) =>
+          ctx.getObjectRoomInstanceId(object) === room.instanceId && object.userData.interactionType === 'button',
+      )
+      .forEach((object) => {
+        const option = document.createElement('option');
+        option.value = String(object.userData.instanceId);
+        option.textContent = object.name;
+        ctx.interactionLockButtonSelect.append(option);
+      });
+
+    ctx.interactionLockButtonSelect.value =
+      edge.requiredButtonInstanceId != null ? String(edge.requiredButtonInstanceId) : '';
+  }
+
+  function renderDoorState({ edge, canonicalRoom, canonicalEdge }) {
+    const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+    ctx.interactionDoorLabel.textContent = `문 · → ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
+
+    // Lock state reads/writes always go through the canonical edge — a door
+    // is unlocked or locked as a whole, not per direction. See
+    // ctx.resolveCanonicalDoorEdge in room-links.js.
+    const lockType = canonicalEdge.lockType || 'none';
+    ctx.interactionLockTypeChoices.querySelectorAll('[data-lock-type]').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.lockType === lockType);
+    });
+
+    ctx.interactionLockPasswordFields.hidden = lockType !== 'password';
+    ctx.interactionLockButtonFields.hidden = lockType !== 'button';
+    ctx.interactionLockKeyFields.hidden = lockType !== 'key';
+
+    if (lockType === 'password') {
+      ctx.interactionLockPasswordInput.value = canonicalEdge.password || '';
+    } else if (lockType === 'button') {
+      renderButtonOptions(canonicalRoom, canonicalEdge);
+    }
+  }
+
+  // Entry point for clicking a door row in the interaction list. Mirrors the
+  // relevant bits of ctx.selectEditorObject(null) (clear normal selection,
+  // detach the gizmo) since a door isn't a transformable object. `room`/`edge`
+  // stay in the clicked room's own perspective (for the "→ target room"
+  // label); `canonicalRoom`/`canonicalEdge` is where lock data actually lives.
+  ctx.selectDoorForInteraction = (room, edge) => {
+    ctx.multiSelection.clear();
+    ctx.selectedEditorObject = null;
+    ctx.transformControls.detach();
+    const canonical = ctx.resolveCanonicalDoorEdge(room, edge);
+    ctx.selectedDoorEdge = { room, edge, canonicalRoom: canonical.room, canonicalEdge: canonical.edge };
+    ctx.updateInspectorFromSelection();
+    ctx.syncHierarchyHighlight?.();
+  };
+
   function renderChoiceList(object) {
     ctx.interactionChoiceList.innerHTML = '';
     const options = object.userData.choiceOptions || [];
@@ -65,12 +134,34 @@ export function initInteraction(ctx) {
 
   function renderInteractionList() {
     ctx.interactionList.innerHTML = '';
-    const items = ctx.placedObjects.filter(
+    const currentRoom = ctx.rooms?.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    const doorItems = currentRoom?.doorEdges || [];
+    const objectItems = ctx.placedObjects.filter(
       (object) =>
         ctx.getObjectRoomInstanceId(object) === ctx.currentRoomInstanceId && object.userData.interactionType,
     );
-    ctx.interactionListEmpty.hidden = items.length > 0;
-    items.forEach((object) => {
+    ctx.interactionListEmpty.hidden = doorItems.length > 0 || objectItems.length > 0;
+
+    doorItems.forEach((edge) => {
+      const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'interaction-list-row';
+
+      const badge = document.createElement('span');
+      badge.className = 'interaction-list-badge interaction-list-badge-door';
+      badge.textContent = '문';
+
+      const label = document.createElement('span');
+      label.className = 'interaction-list-row-label';
+      label.textContent = `→ ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
+
+      row.append(badge, label);
+      row.addEventListener('click', () => ctx.selectDoorForInteraction(currentRoom, edge));
+      ctx.interactionList.append(row);
+    });
+
+    objectItems.forEach((object) => {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'interaction-list-row';
@@ -92,8 +183,20 @@ export function initInteraction(ctx) {
 
   ctx.updateInteractionFromSelection = () => {
     const count = ctx.multiSelection.size;
-    ctx.interactionListSection.hidden = count !== 0;
-    ctx.interactionBody.hidden = count === 0;
+    const doorSelection = ctx.selectedDoorEdge;
+
+    ctx.interactionListSection.hidden = count !== 0 || Boolean(doorSelection);
+    ctx.interactionBody.hidden = count === 0 && !doorSelection;
+
+    if (doorSelection) {
+      ctx.interactionNoneState.hidden = true;
+      ctx.interactionActiveState.hidden = true;
+      ctx.interactionDoorState.hidden = false;
+      renderDoorState(doorSelection);
+      return;
+    }
+    ctx.interactionDoorState.hidden = true;
+
     if (count === 0) {
       renderInteractionList();
       return;
@@ -114,7 +217,37 @@ export function initInteraction(ctx) {
   };
 
   ctx.interactionBackButton.addEventListener('click', () => {
+    ctx.selectedDoorEdge = null;
     ctx.selectEditorObject(null);
+  });
+
+  ctx.interactionLockTypeChoices.querySelectorAll('[data-lock-type]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!ctx.selectedDoorEdge) return;
+      // Written to the canonical edge — a door is unlocked/locked as a
+      // whole, so both directions must see the same lockType.
+      ctx.selectedDoorEdge.canonicalEdge.lockType = button.dataset.lockType;
+      renderDoorState(ctx.selectedDoorEdge);
+      ctx.saveLayout();
+    });
+  });
+
+  ctx.interactionLockPasswordInput.addEventListener('input', () => {
+    if (!ctx.selectedDoorEdge) return;
+    ctx.selectedDoorEdge.canonicalEdge.password = ctx.interactionLockPasswordInput.value;
+    ctx.saveLayout();
+  });
+
+  ctx.interactionLockButtonSelect.addEventListener('change', () => {
+    if (!ctx.selectedDoorEdge) return;
+    const { canonicalEdge } = ctx.selectedDoorEdge;
+    const value = ctx.interactionLockButtonSelect.value;
+    canonicalEdge.requiredButtonInstanceId = value ? Number(value) : null;
+    // Clear the stale persisted-id fallback too — otherwise explicitly
+    // unpicking a button here would still round-trip the old saved id on
+    // the next save (persistence.js falls back to it when the live id is null).
+    canonicalEdge.requiredButtonSavedId = null;
+    ctx.saveLayout();
   });
 
   ctx.interactionAddButton.addEventListener('click', () => {

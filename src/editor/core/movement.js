@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildPeekBeamGeometry, edgeMidpoint } from './room-doors.js';
 
 const CHARACTER_RADIUS = 0.32;
 const INTERACTION_RADIUS = 1.5;
@@ -20,6 +21,155 @@ function circleIntersectsCircle(px, pz, radius, cx, cz, otherRadius) {
   const dz = pz - cz;
   const minDistance = radius + otherRadius;
   return dx * dx + dz * dz < minDistance * minDistance;
+}
+
+// Grid cells that actually overlap a blocksMovement object's collision shape
+// — no character-radius margin here (that's already enforced separately,
+// every frame, by the precise circle-vs-box/cylinder check in
+// isBlockedByPlacedObjects; adding it again here just to plan a path would
+// double up and make small furniture block a much wider area than it really
+// occupies). Reuses the same userData.colliderShape the real collision check
+// reads, rather than always treating the object as a box, so round objects
+// (colliderShape: 'cylinder') don't over-block their corners either.
+function computeBlockedCellSet(ctx, roomInstanceId) {
+  const blocked = new Set();
+  ctx.placedObjects.forEach((object) => {
+    if (!object.userData.blocksMovement) return;
+    if (ctx.getObjectRoomInstanceId(object) !== roomInstanceId) return;
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return;
+    const minX = Math.floor(box.min.x);
+    const maxX = Math.floor(box.max.x);
+    const minZ = Math.floor(box.min.z);
+    const maxZ = Math.floor(box.max.z);
+
+    if (object.userData.colliderShape === 'cylinder') {
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.z) / 2;
+      for (let x = minX; x <= maxX; x += 1) {
+        for (let z = minZ; z <= maxZ; z += 1) {
+          if (circleIntersectsBox(center.x, center.z, radius, { min: { x, z }, max: { x: x + 1, z: z + 1 } })) {
+            blocked.add(`${x},${z}`);
+          }
+        }
+      }
+      return;
+    }
+
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        const overlapsX = box.min.x < x + 1 && box.max.x > x;
+        const overlapsZ = box.min.z < z + 1 && box.max.z > z;
+        if (overlapsX && overlapsZ) blocked.add(`${x},${z}`);
+      }
+    }
+  });
+  return blocked;
+}
+
+// A* over the room's floor grid — needed because click-to-move used to walk
+// a straight line straight to the destination, which clips right through
+// missing corners in any non-convex room shape (an L-shaped hallway, say)
+// even though both endpoints are on valid floor. `isWalkable(x, z)` decides
+// whether a cell counts as floor AND isn't blocked by furniture. Returns an
+// array of {x,z} cell coords from start to end (inclusive), or null if end
+// isn't reachable from start.
+const PATH_NEIGHBORS = [
+  { dx: 1, dz: 0, cost: 1 },
+  { dx: -1, dz: 0, cost: 1 },
+  { dx: 0, dz: 1, cost: 1 },
+  { dx: 0, dz: -1, cost: 1 },
+  { dx: 1, dz: 1, cost: Math.SQRT2 },
+  { dx: 1, dz: -1, cost: Math.SQRT2 },
+  { dx: -1, dz: 1, cost: Math.SQRT2 },
+  { dx: -1, dz: -1, cost: Math.SQRT2 },
+];
+
+function findGridPath(isWalkable, start, end) {
+  const startKey = `${start.x},${start.z}`;
+  const endKey = `${end.x},${end.z}`;
+  if (startKey === endKey) return [start];
+  // The start cell is always allowed even if it reads as "blocked" (the
+  // character is already standing there — e.g. right next to a piece of
+  // furniture whose expanded collision margin laps over into this cell).
+  if (!isWalkable(end.x, end.z)) return null;
+
+  const heuristic = (x, z) => Math.hypot(end.x - x, end.z - z);
+  const gScore = new Map([[startKey, 0]]);
+  const cameFrom = new Map();
+  const open = [{ key: startKey, x: start.x, z: start.z, f: heuristic(start.x, start.z) }];
+  const closed = new Set();
+
+  while (open.length) {
+    open.sort((a, b) => a.f - b.f);
+    const current = open.shift();
+    if (current.key === endKey) {
+      const path = [{ x: current.x, z: current.z }];
+      let key = current.key;
+      while (cameFrom.has(key)) {
+        key = cameFrom.get(key);
+        const [x, z] = key.split(',').map(Number);
+        path.unshift({ x, z });
+      }
+      return path;
+    }
+    if (closed.has(current.key)) continue;
+    closed.add(current.key);
+
+    PATH_NEIGHBORS.forEach(({ dx, dz, cost }) => {
+      const nx = current.x + dx;
+      const nz = current.z + dz;
+      const nKey = `${nx},${nz}`;
+      if (closed.has(nKey)) return;
+      if (nKey !== startKey && !isWalkable(nx, nz)) return;
+      // A diagonal step must not cut through a corner neither orthogonal
+      // neighbor actually has floor on — otherwise the path (and the
+      // straight-line walk between two path points) can clip a missing cell.
+      if (dx !== 0 && dz !== 0) {
+        const orthogonalOpen = isWalkable(current.x + dx, current.z) && isWalkable(current.x, current.z + dz);
+        if (!orthogonalOpen) return;
+      }
+      const tentativeG = gScore.get(current.key) + cost;
+      if (tentativeG < (gScore.get(nKey) ?? Infinity)) {
+        gScore.set(nKey, tentativeG);
+        cameFrom.set(nKey, current.key);
+        open.push({ key: nKey, x: nx, z: nz, f: tentativeG + heuristic(nx, nz) });
+      }
+    });
+  }
+  return null;
+}
+
+// Straight line between two world points, sampled every ~0.15 units, all on
+// walkable cells.
+function hasLineOfSight(isWalkable, from, to) {
+  const distance = from.distanceTo(to);
+  const steps = Math.max(1, Math.ceil(distance / 0.15));
+  for (let i = 1; i < steps; i += 1) {
+    const t = i / steps;
+    const x = from.x + (to.x - from.x) * t;
+    const z = from.z + (to.z - from.z) * t;
+    if (!isWalkable(Math.floor(x), Math.floor(z))) return false;
+  }
+  return true;
+}
+
+// Reduces a cell-by-cell path down to just the corners actually needed —
+// otherwise the character would visibly stop and re-aim at every single
+// grid cell along the way instead of walking a natural, mostly-straight route.
+function simplifyWorldPath(isWalkable, worldPoints) {
+  if (worldPoints.length <= 2) return worldPoints;
+  const result = [worldPoints[0]];
+  let anchor = 0;
+  for (let i = 2; i < worldPoints.length; i += 1) {
+    if (!hasLineOfSight(isWalkable, worldPoints[anchor], worldPoints[i])) {
+      result.push(worldPoints[i - 1]);
+      anchor = i - 1;
+    }
+  }
+  result.push(worldPoints[worldPoints.length - 1]);
+  return result;
 }
 
 export function initMovement(ctx) {
@@ -86,6 +236,9 @@ export function initMovement(ctx) {
   };
 
   const destination = new THREE.Vector3();
+  // Remaining waypoints after `destination` — populated by setDestination
+  // when the A* path has more than one corner to walk through.
+  let movementPath = [];
   const movementDirection = new THREE.Vector3();
   const cameraForward = new THREE.Vector3();
   const cameraRight = new THREE.Vector3();
@@ -197,6 +350,10 @@ export function initMovement(ctx) {
   function isBlockedByPlacedObjects(position) {
     return ctx.placedObjects.some((object) => {
       if (!object.userData.blocksMovement) return false;
+      // Every room's root sits at the same local origin, so without this an
+      // object in a different (hidden) room can still collide with the
+      // character in whichever room is actually being played.
+      if (ctx.getObjectRoomInstanceId(object) !== ctx.currentRoomInstanceId) return false;
       const box = new THREE.Box3().setFromObject(object);
       if (box.isEmpty()) return false;
 
@@ -238,6 +395,7 @@ export function initMovement(ctx) {
   ctx.resetCharacterMovement = () => {
     ctx.character.position.set(0, 0, 0);
     ctx.isMoving = false;
+    movementPath = [];
     ctx.pressedKeys.clear();
     ctx.destinationMarker.visible = false;
   };
@@ -260,22 +418,30 @@ export function initMovement(ctx) {
     if (ctx.currentMode !== 'movement' || ctx.isFalling) return;
     ctx.setPointer(event);
 
-    const objectHits = ctx.raycaster.intersectObjects(ctx.placedObjects, true);
-    if (objectHits.length) {
-      const object = ctx.findPlacedAncestor(objectHits[0].object);
-      if (object?.userData.interactionType === 'door' && object.userData.blocksMovement) {
-        object.userData.blocksMovement = false;
-        return;
-      }
-    }
-
     const hit = ctx.raycaster.intersectObject(ctx.navigationSurface, false)[0];
     if (!hit || !ctx.isInsideActiveMap(hit.point)) return;
 
-    destination.copy(hit.point);
-    destination.y = 0;
-    ctx.destinationMarker.position.x = destination.x;
-    ctx.destinationMarker.position.z = destination.z;
+    const cellSet = ctx.editorLayoutBounds?.cellSet;
+    if (!cellSet) return;
+    const blockedCellSet = computeBlockedCellSet(ctx, ctx.currentRoomInstanceId);
+    const isWalkable = (x, z) => cellSet.has(`${x},${z}`) && !blockedCellSet.has(`${x},${z}`);
+
+    const startCell = { x: Math.floor(ctx.character.position.x), z: Math.floor(ctx.character.position.z) };
+    const endCell = { x: Math.floor(hit.point.x), z: Math.floor(hit.point.z) };
+    const cellPath = findGridPath(isWalkable, startCell, endCell);
+    if (!cellPath) return; // not reachable from here (blocked off by furniture, or not connected)
+
+    const worldPoints = cellPath.map(({ x, z }) => new THREE.Vector3(x + 0.5, 0, z + 0.5));
+    worldPoints[0].set(ctx.character.position.x, 0, ctx.character.position.z);
+    worldPoints[worldPoints.length - 1].set(hit.point.x, 0, hit.point.z);
+    // Drop the leading point (current position) — everything after it is a
+    // waypoint still to walk through.
+    const waypoints = simplifyWorldPath(isWalkable, worldPoints).slice(1);
+
+    movementPath = waypoints.slice(1);
+    destination.copy(waypoints[0] ?? new THREE.Vector3(hit.point.x, 0, hit.point.z));
+    ctx.destinationMarker.position.x = hit.point.x;
+    ctx.destinationMarker.position.z = hit.point.z;
     ctx.destinationMarker.visible = true;
     ctx.isMoving = true;
   };
@@ -307,6 +473,7 @@ export function initMovement(ctx) {
 
     rotateTowardsMovement(delta);
     ctx.isMoving = false;
+    movementPath = [];
     ctx.destinationMarker.visible = false;
     return true;
   }
@@ -327,9 +494,15 @@ export function initMovement(ctx) {
 
     if (remainingDistance < 0.04) {
       ctx.character.position.copy(destination);
-      ctx.isMoving = false;
-      ctx.destinationMarker.visible = false;
-      applyCharacterPose(false);
+      if (movementPath.length > 0) {
+        // More corners left on the A* path — keep walking without a frame
+        // of idle pose at the corner (isAnimatingRun stays true already).
+        destination.copy(movementPath.shift());
+      } else {
+        ctx.isMoving = false;
+        ctx.destinationMarker.visible = false;
+        applyCharacterPose(false);
+      }
       return;
     }
 
@@ -343,6 +516,7 @@ export function initMovement(ctx) {
     if (!ctx.isInsideActiveMap(ctx.character.position)) {
       ctx.character.position.copy(previousPosition);
       ctx.isMoving = false;
+      movementPath = [];
       ctx.destinationMarker.visible = false;
       applyCharacterPose(false);
       return;
@@ -471,6 +645,16 @@ export function initMovement(ctx) {
   // the single object behind an open modal) — checked every frame so the UI
   // auto-closes once the player walks out of range of all of them.
   let activeInteractionTargets = [];
+  // Runtime-only (not persisted, not networked yet) — which "버튼" objects
+  // have been pressed this play-test session. Doors will read this later to
+  // decide whether a button-locked opening is unlocked.
+  ctx.pressedButtonInstanceIds = new Set();
+  // Same idea for password-locked doors — holds the canonical edge object
+  // itself (not an id) once its code has been entered correctly this
+  // session. An object works fine as a Set key here since it's the exact
+  // same reference every time (ctx.resolveCanonicalDoorEdge always returns
+  // the one shared edge for a given door).
+  ctx.unlockedPasswordDoors = new Set();
 
   function isWithinInteractionRange(object) {
     object.getWorldPosition(interactionWorldPosition);
@@ -496,10 +680,24 @@ export function initMovement(ctx) {
     ctx.choiceModalResult.textContent = '';
   }
 
+  // The door being prompted for right now, if any — { room, edge } using
+  // the same clicked-room/canonical-edge split as ctx.selectedDoorEdge in
+  // interaction.js (the label/proximity check stays in the player's own
+  // room, but the password itself lives on the canonical edge).
+  let activePasswordDoor = null;
+
+  function hidePasswordModal() {
+    ctx.passwordModal.hidden = true;
+    ctx.passwordModalError.hidden = true;
+    ctx.passwordModalInput.value = '';
+    activePasswordDoor = null;
+  }
+
   ctx.cancelInteractionPicker = () => {
     hideInteractionPicker();
     hideMemoModal();
     hideChoiceModal();
+    hidePasswordModal();
     activeInteractionTargets = [];
   };
 
@@ -527,8 +725,38 @@ export function initMovement(ctx) {
     activeInteractionTargets = [object];
   }
 
+  function showPasswordModal(room, edge) {
+    hideMemoModal();
+    hideChoiceModal();
+    hideInteractionPicker();
+    ctx.passwordModalError.hidden = true;
+    ctx.passwordModalInput.value = '';
+    ctx.passwordModal.hidden = false;
+    ctx.passwordModalInput.focus();
+    activePasswordDoor = { room, edge };
+  }
+
+  function submitPasswordModal() {
+    if (!activePasswordDoor) return;
+    const { room, edge } = activePasswordDoor;
+    const { edge: canonicalEdge } = ctx.resolveCanonicalDoorEdge(room, edge);
+    if (ctx.passwordModalInput.value === (canonicalEdge.password || '')) {
+      ctx.unlockedPasswordDoors.add(canonicalEdge);
+      hidePasswordModal();
+      ctx.showCenterToast?.('잠금이 해제됐습니다.', 1400);
+    } else {
+      ctx.passwordModalError.hidden = false;
+      ctx.passwordModalInput.select();
+    }
+  }
+
   ctx.memoModalClose.addEventListener('click', ctx.cancelInteractionPicker);
   ctx.choiceModalClose.addEventListener('click', ctx.cancelInteractionPicker);
+  ctx.passwordModalClose.addEventListener('click', ctx.cancelInteractionPicker);
+  ctx.passwordModalConfirm.addEventListener('click', submitPasswordModal);
+  ctx.passwordModalInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitPasswordModal();
+  });
 
   // Does the actual "interact" action. Memo/choice show real modals; image
   // is still a status-text placeholder until that UI exists.
@@ -542,7 +770,11 @@ export function initMovement(ctx) {
       showChoiceModal(object);
       return;
     }
-    console.log('[interact]', object.userData.interactionType, object);
+    if (object.userData.interactionType === 'button') {
+      ctx.pressedButtonInstanceIds.add(object.userData.instanceId);
+      ctx.showCenterToast(`"${object.name}" 버튼을 눌렀습니다.`, 1400);
+      return;
+    }
     ctx.editorStatus.textContent = `상호작용: ${object.name} (${object.userData.interactionType})`;
     activeInteractionTargets = [object];
   }
@@ -567,6 +799,27 @@ export function initMovement(ctx) {
     hideInteractionPicker();
     hideMemoModal();
     hideChoiceModal();
+
+    // Doors aren't in ctx.placedObjects (they're structural, not a placed
+    // asset), so they get their own proximity check here rather than
+    // joining the object-candidate list below. Only password-locked AND
+    // still-locked doors need this — 'none' has nothing to prompt for, and
+    // 'button' is unlocked by interacting with the button object itself,
+    // not the door.
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    const nearbyLockedDoor = room?.doorEdges?.find((edge) => {
+      const { edge: canonicalEdge } = ctx.resolveCanonicalDoorEdge(room, edge);
+      if ((canonicalEdge.lockType || 'none') !== 'password') return false;
+      if (isDoorEdgeUnlocked(room, edge)) return false;
+      const mid = edgeMidpointXZ(edge);
+      const dx = ctx.character.position.x - mid.x;
+      const dz = ctx.character.position.z - mid.y;
+      return dx * dx + dz * dz <= INTERACTION_RADIUS * INTERACTION_RADIUS;
+    });
+    if (nearbyLockedDoor) {
+      showPasswordModal(room, nearbyLockedDoor);
+      return;
+    }
 
     const candidates = [];
     ctx.placedObjects.forEach((object) => {
@@ -595,5 +848,124 @@ export function initMovement(ctx) {
     if (activeInteractionTargets.length === 0) return;
     const stillInRange = activeInteractionTargets.some(isWithinInteractionRange);
     if (!stillInRange) ctx.cancelInteractionPicker();
+  };
+
+  function isDoorEdgeUnlocked(room, edge) {
+    const { edge: canonicalEdge } = ctx.resolveCanonicalDoorEdge(room, edge);
+    const lockType = canonicalEdge.lockType || 'none';
+    if (lockType === 'none') return true;
+    if (lockType === 'button') {
+      return (
+        canonicalEdge.requiredButtonInstanceId != null &&
+        ctx.pressedButtonInstanceIds.has(canonicalEdge.requiredButtonInstanceId)
+      );
+    }
+    if (lockType === 'password') {
+      return ctx.unlockedPasswordDoors.has(canonicalEdge);
+    }
+    return false;
+  }
+
+  // Swings the door leaf open on its hinge once its lock condition (of
+  // whatever kind — 'none', 'button', eventually 'password') is satisfied,
+  // reusing the exact same isDoorEdgeUnlocked check the transition logic
+  // uses, so the visual state and the "can I actually walk through" state
+  // never disagree.
+  const DOOR_OPEN_ANGLE = -Math.PI / 2;
+  const DOOR_ANIM_LERP_SPEED = 6;
+
+  ctx.updateDoorAnimations = (delta) => {
+    if (ctx.currentMode !== 'movement') return;
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    if (!room) return;
+    (room.doorEdges || []).forEach((edge) => {
+      const leaf = edge._doorLeaf;
+      if (leaf) {
+        const targetAngle = isDoorEdgeUnlocked(room, edge) ? DOOR_OPEN_ANGLE : 0;
+        leaf.rotation.y += (targetAngle - leaf.rotation.y) * Math.min(1, delta * DOOR_ANIM_LERP_SPEED);
+      }
+
+      // The floor-peek beam (room-doors.js) grows to match how far the door
+      // has actually swung open, instead of just popping to a fixed shape —
+      // so a door barely cracked open only shows a sliver.
+      const beam = edge._peekBeam;
+      if (beam && leaf) {
+        const openFraction = THREE.MathUtils.clamp(Math.abs(leaf.rotation.y) / Math.abs(DOOR_OPEN_ANGLE), 0, 1);
+        if (Math.abs(openFraction - edge._peekOpenFraction) > 0.01) {
+          edge._peekOpenFraction = openFraction;
+          beam.geometry.dispose();
+          beam.geometry = buildPeekBeamGeometry(ctx, edge._peekOutward, openFraction);
+        }
+      }
+    });
+  };
+
+  const DOOR_TRANSITION_RADIUS = 0.55;
+  const doorMidpoint = new THREE.Vector2();
+
+  // Reuses a scratch Vector2 since this runs every frame — the offset
+  // convention itself lives in room-doors.js's edgeMidpoint, the single
+  // source of truth shared with room-links.js.
+  function edgeMidpointXZ(edge) {
+    const { x, z } = edgeMidpoint(edge);
+    return doorMidpoint.set(x, z);
+  }
+
+  // Which direction is "into the room" from this edge — used to drop the
+  // character just past the doorway on the other side instead of exactly on
+  // the boundary line (where they'd immediately re-trigger the transition
+  // back).
+  function edgeInwardOffset(edge, distance) {
+    if (edge.side === 'N') return { x: 0, z: distance };
+    if (edge.side === 'S') return { x: 0, z: -distance };
+    if (edge.side === 'W') return { x: distance, z: 0 };
+    return { x: -distance, z: 0 }; // E
+  }
+
+  // Rooms aren't spatially continuous (every room.root sits at the same
+  // local origin — see rooms.js) — a door doesn't lead to an adjacent
+  // position, it swaps which room is "current" and drops the character at
+  // the matching doorway on the other side.
+  function transitionThroughDoor(room, edge) {
+    const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
+    if (!targetRoom || !targetRoom._loaded) return; // directly-linked rooms are eager-loaded; not loaded means data's missing
+    const matchedEdge = ctx.findDoorMirrorEdge(room, targetRoom, edge);
+    if (!matchedEdge) return;
+
+    const mid = edgeMidpointXZ(matchedEdge);
+    const inward = edgeInwardOffset(matchedEdge, 0.8);
+    ctx.currentRoomInstanceId = targetRoom.instanceId;
+    ctx.applyRoomVisibility();
+    ctx.character.position.set(mid.x + inward.x, 0, mid.y + inward.z);
+    ctx.editorLayoutBounds = ctx.computeEditorLayoutBounds();
+    ctx.isMoving = false;
+    movementPath = [];
+    ctx.destinationMarker.visible = false;
+    // ctx.updateQuarterView lerps the camera toward the character every
+    // frame but always looks straight at the character's *current* position
+    // — after a teleport that leaves the camera far from where it should be,
+    // so for the next several frames it sweeps through a wide arc to catch
+    // up (reads as a violent spin). Snapping it straight to the correct
+    // isometric offset here skips that entirely.
+    ctx.camera.position.copy(ctx.character.position).add(ctx.cameraOffset);
+    ctx.camera.lookAt(ctx.character.position.x, ctx.character.position.y + 0.65, ctx.character.position.z);
+    ctx.showCenterToast?.(`"${targetRoom.name}"(으)로 이동했습니다.`, 1400);
+  }
+
+  // Checked every frame in movement mode — reaching an unlocked doorway
+  // transitions immediately, no separate "interact to open" step.
+  ctx.updateDoorTransitions = () => {
+    if (ctx.currentMode !== 'movement') return;
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    if (!room) return;
+
+    const nearbyEdge = (room.doorEdges || []).find((edge) => {
+      const mid = edgeMidpointXZ(edge);
+      const dx = ctx.character.position.x - mid.x;
+      const dz = ctx.character.position.z - mid.y;
+      return dx * dx + dz * dz < DOOR_TRANSITION_RADIUS * DOOR_TRANSITION_RADIUS;
+    });
+    if (!nearbyEdge || !isDoorEdgeUnlocked(room, nearbyEdge)) return;
+    transitionThroughDoor(room, nearbyEdge);
   };
 }

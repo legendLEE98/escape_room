@@ -46,7 +46,6 @@ export function initPlacement(ctx) {
       container.userData.bgImageUrl = transform?.bgImageUrl ?? null;
       container.userData.memoText = transform?.memoText ?? null;
       container.userData.choiceOptions = transform?.choiceOptions ?? null;
-      container.userData.connectedRoomId = transform?.connectedRoomId ?? null;
       container.userData.parentInstanceId = null;
 
       getRoomRoot(transform?.roomInstanceId ?? ctx.currentRoomInstanceId).add(container);
@@ -84,7 +83,6 @@ export function initPlacement(ctx) {
     container.userData.bgImageUrl = transform?.bgImageUrl ?? null;
     container.userData.memoText = transform?.memoText ?? null;
     container.userData.choiceOptions = transform?.choiceOptions ?? null;
-    container.userData.connectedRoomId = transform?.connectedRoomId ?? null;
     container.userData.parentInstanceId = null;
 
     getRoomRoot(transform?.roomInstanceId ?? ctx.currentRoomInstanceId).add(container);
@@ -147,7 +145,6 @@ export function initPlacement(ctx) {
     container.userData.colliderShape = 'box';
     container.userData.useGravity = false;
     container.userData.interactionType = null;
-    container.userData.connectedRoomId = null;
     container.userData.parentInstanceId = null;
 
     getRoomRoot(roomInstanceId).add(container);

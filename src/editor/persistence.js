@@ -12,28 +12,48 @@ export function initPersistence(ctx) {
 
   // A room that was never lazy-loaded has no live THREE.js objects to read from —
   // its only source of truth is the raw JSON it was parsed from (room._savedObjects).
-  // Both initialSpawnPos and connectedRooms are themselves *derived* fields (never
-  // authored directly), so they're recomputed from that raw JSON here, the same way
-  // the loaded branch recomputes them from live objects. Storing them as separate
-  // frozen copies instead would create two sources of truth that can drift apart.
-  // Wall-opening links made in the room-link panel, independent of the older
-  // door-object-based connectedRooms above (that graph comes from placed
-  // objects; this one comes from room.doorEdges, set by ctx.buildRoomWalls).
+  // initialSpawnPos is itself a *derived* field (never authored directly), so it's
+  // recomputed from that raw JSON here, the same way the loaded branch recomputes
+  // it from live objects. Storing it as a separate frozen copy instead would create
+  // two sources of truth that can drift apart.
   function serializeDoorEdges(room) {
-    return (room.doorEdges || []).map(({ x, z, side, connectedRoomInstanceId }) => ({
-      x,
-      z,
-      side,
-      connectedRoomId: connectedRoomInstanceId != null ? `room-${connectedRoomInstanceId}` : null,
-    }));
+    return (room.doorEdges || []).map(
+      ({
+        x,
+        z,
+        side,
+        connectedRoomInstanceId,
+        lockType,
+        password,
+        requiredButtonInstanceId,
+        requiredButtonSavedId,
+        doorId,
+      }) => ({
+        x,
+        z,
+        side,
+        connectedRoomId: connectedRoomInstanceId != null ? `room-${connectedRoomInstanceId}` : null,
+        // A random UUID, not derived from any per-session counter — unlike
+        // room/object instanceIds it needs no remapping on restore.
+        doorId: doorId || null,
+        lockType: lockType || 'none',
+        password: password || '',
+        // requiredButtonInstanceId is only ever valid within the current
+        // session (object instanceIds are reassigned from 1 on every load,
+        // same as room instanceIds), so it's saved as the same stable
+        // "obj-N" id used elsewhere (parentObjectId). If it
+        // never got resolved this session (its room was never opened),
+        // requiredButtonSavedId still carries the original saved id through
+        // untouched instead of losing it.
+        requiredButtonId:
+          requiredButtonInstanceId != null ? `obj-${requiredButtonInstanceId}` : requiredButtonSavedId || null,
+      }),
+    );
   }
 
   function serializeUnloadedRoom(room) {
     const savedObjects = room._savedObjects ?? [];
     const spawnItem = savedObjects.find((item) => item.isSpawnPoint);
-    const connectedRooms = savedObjects
-      .filter((item) => item.interaction?.interactionType === 'door' && item.interaction?.connectedRoomId != null)
-      .map((item) => ({ roomId: item.interaction.connectedRoomId, doorObjectId: item.id }));
 
     return {
       id: `room-${room.instanceId}`,
@@ -43,7 +63,6 @@ export function initPersistence(ctx) {
       floorCells: room.floorCells ?? null,
       doorEdges: serializeDoorEdges(room),
       worldOffset: room.worldOffset ?? { x: 0, z: 0 },
-      connectedRooms,
       objects: savedObjects,
     };
   }
@@ -55,12 +74,6 @@ export function initPersistence(ctx) {
       const roomObjects = ctx.placedObjects.filter(
         (object) => ctx.getObjectRoomInstanceId(object) === room.instanceId,
       );
-      const connectedRooms = roomObjects
-        .filter((object) => object.userData.interactionType === 'door' && object.userData.connectedRoomId != null)
-        .map((object) => ({
-          roomId: `room-${object.userData.connectedRoomId}`,
-          doorObjectId: `obj-${object.userData.instanceId}`,
-        }));
       const spawnObject = roomObjects.find((object) => object.userData.isSpawnPoint);
 
       return {
@@ -71,7 +84,6 @@ export function initPersistence(ctx) {
         floorCells: room.floorCells ?? null,
         doorEdges: serializeDoorEdges(room),
         worldOffset: room.worldOffset ?? { x: 0, z: 0 },
-        connectedRooms,
         objects: roomObjects.map((object) => ({
           id: `obj-${object.userData.instanceId}`,
           name: object.name,
@@ -96,8 +108,6 @@ export function initPersistence(ctx) {
                 bgImageUrl: object.userData.bgImageUrl || null,
                 memoText: object.userData.memoText || null,
                 choiceOptions: object.userData.choiceOptions || null,
-                connectedRoomId:
-                  object.userData.connectedRoomId != null ? `room-${object.userData.connectedRoomId}` : null,
               }
             : null,
         })),
@@ -133,7 +143,7 @@ export function initPersistence(ctx) {
       if (savedRoom.floorCells?.length) ctx.buildRoomFloor(room, savedRoom.floorCells);
       // Keep the raw saved objects around so an unopened room can still be
       // round-tripped through save/restore without ever being instantiated —
-      // initialSpawnPos/connectedRooms are re-derived from these, not stored separately.
+      // initialSpawnPos is re-derived from these, not stored separately.
       room._savedObjects = savedRoom.objects || [];
       room._loaded = false;
       roomIdMap.set(savedRoom.id, room.instanceId);
@@ -146,12 +156,25 @@ export function initPersistence(ctx) {
     savedRooms.forEach((savedRoom, index) => {
       const room = ctx.rooms[index];
       if (!savedRoom.floorCells?.length) return;
-      const doorEdges = (savedRoom.doorEdges || []).map(({ x, z, side, connectedRoomId }) => ({
-        x,
-        z,
-        side,
-        connectedRoomInstanceId: connectedRoomId ? roomIdMap.get(connectedRoomId) ?? null : null,
-      }));
+      const doorEdges = (savedRoom.doorEdges || []).map(
+        ({ x, z, side, connectedRoomId, doorId, lockType, password, requiredButtonId }) => {
+          const edge = {
+            x,
+            z,
+            side,
+            connectedRoomInstanceId: connectedRoomId ? roomIdMap.get(connectedRoomId) ?? null : null,
+            doorId: doorId || null,
+            lockType: lockType || 'none',
+            password: password || '',
+            // Resolved lazily once the button's own room actually loads and
+            // its object gets a live instanceId — see resolvePendingDoorButtonLinks.
+            requiredButtonInstanceId: null,
+            requiredButtonSavedId: requiredButtonId || null,
+          };
+          if (requiredButtonId) ctx.pendingDoorButtonLinks.push(edge);
+          return edge;
+        },
+      );
       ctx.buildRoomWalls(room, savedRoom.floorCells, doorEdges);
     });
 
@@ -175,7 +198,6 @@ export function initPersistence(ctx) {
           bgImageUrl: interaction.bgImageUrl ?? null,
           memoText: interaction.memoText ?? null,
           choiceOptions: interaction.choiceOptions ?? null,
-          connectedRoomId: interaction.connectedRoomId ? roomIdMap.get(interaction.connectedRoomId) ?? null : null,
           visible: item.visible ?? true,
           savedId: item.id,
           parentObjectId: item.parentObjectId ?? null,
@@ -192,6 +214,10 @@ export function initPersistence(ctx) {
   // cross room boundaries still resolve once both sides have been loaded.
   ctx.crossRoomIdMap = new Map();
   ctx.pendingParentLinks = [];
+  // Door-edge lock configs referencing a "button" object by its saved id —
+  // that object may live in a room that hasn't been opened (lazy-loaded)
+  // yet, so the edge just holds requiredButtonSavedId until then.
+  ctx.pendingDoorButtonLinks = [];
 
   function resolvePendingParentLinks() {
     ctx.pendingParentLinks = ctx.pendingParentLinks.filter((link) => {
@@ -204,7 +230,19 @@ export function initPersistence(ctx) {
     });
   }
 
-  ctx.loadRoomContents = async (room) => {
+  function resolvePendingDoorButtonLinks() {
+    ctx.pendingDoorButtonLinks = ctx.pendingDoorButtonLinks.filter((edge) => {
+      const container = ctx.crossRoomIdMap.get(edge.requiredButtonSavedId);
+      if (!container) return true;
+      edge.requiredButtonInstanceId = container.userData.instanceId;
+      return false;
+    });
+  }
+
+  // loadNeighbors: false is used when THIS call is itself loading a
+  // neighbor, so we load one ring of directly-connected rooms out and stop —
+  // not the whole connected graph transitively.
+  ctx.loadRoomContents = async (room, { loadNeighbors = true } = {}) => {
     if (room._loaded) return;
     room._loaded = true;
     const items = room._pendingItems || [];
@@ -229,6 +267,21 @@ export function initPersistence(ctx) {
 
     delete room._pendingItems;
     resolvePendingParentLinks();
+    resolvePendingDoorButtonLinks();
+
+    if (!loadNeighbors) return;
+    // Rooms directly connected by a door load together with this one — a
+    // button-locked door referencing an object in the next room over
+    // shouldn't have to wait for the player to separately walk in there.
+    const neighborRoomIds = new Set(
+      (room.doorEdges || []).map((edge) => edge.connectedRoomInstanceId).filter((id) => id != null),
+    );
+    await Promise.all(
+      Array.from(neighborRoomIds).map((id) => {
+        const neighbor = ctx.rooms.find((candidate) => candidate.instanceId === id);
+        return neighbor ? ctx.loadRoomContents(neighbor, { loadNeighbors: false }) : null;
+      }),
+    );
   };
 
   ctx.restoreLayout = async () => {

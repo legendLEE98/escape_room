@@ -21,6 +21,7 @@ export function initHierarchy(ctx) {
 
   ctx.selectEditorObject = (object, options = {}) => {
     const { additive = false, range = false } = options;
+    ctx.selectedDoorEdge = null;
 
     if (!object) {
       ctx.multiSelection.clear();

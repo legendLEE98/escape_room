@@ -96,6 +96,8 @@ export function initMode(ctx) {
       ctx.applyEditorView(ctx.editorView);
     } else {
       ctx.resetCharacterMovement();
+      ctx.pressedButtonInstanceIds?.clear();
+      ctx.unlockedPasswordDoors?.clear();
       ctx.editorLayoutBounds = ctx.computeEditorLayoutBounds();
 
       const spawnPoint = ctx.placedObjects.find(

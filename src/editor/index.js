@@ -68,6 +68,8 @@ export function createScene(canvas, mapId) {
     ctx.updateCharacterGravity(delta);
     ctx.updateMovement(delta);
     ctx.updateInteractionRange();
+    ctx.updateDoorTransitions();
+    ctx.updateDoorAnimations(delta);
     ctx.updateCharacterCollisionDebug();
     ctx.updateQuarterView(delta);
     ctx.updateWallOcclusion(delta);

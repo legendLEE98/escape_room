@@ -257,6 +257,9 @@ export default function Editor({ mapId, onBack }) {
                   <button type="button" className="interaction-type-choice" data-interaction-type="image">
                     이미지
                   </button>
+                  <button type="button" className="interaction-type-choice" data-interaction-type="button">
+                    버튼
+                  </button>
                 </div>
               </div>
 
@@ -284,6 +287,43 @@ export default function Editor({ mapId, onBack }) {
                   <label htmlFor="inspector-bg-image">2D 이미지 (로컬 파일)</label>
                   <input id="inspector-bg-image" type="file" accept="image/*" />
                   <img id="inspector-bg-preview" alt="" hidden />
+                </div>
+              </div>
+
+              <div id="interaction-door-state" hidden>
+                <div className="interaction-active-header">
+                  <span id="interaction-door-label" className="interaction-active-badge" />
+                </div>
+
+                <label>잠금 방식</label>
+                <div id="interaction-lock-type-choices" className="interaction-type-choices">
+                  <button type="button" className="interaction-type-choice" data-lock-type="none">
+                    없음
+                  </button>
+                  <button type="button" className="interaction-type-choice" data-lock-type="password">
+                    비밀번호
+                  </button>
+                  <button type="button" className="interaction-type-choice" data-lock-type="button">
+                    버튼
+                  </button>
+                  <button type="button" className="interaction-type-choice" data-lock-type="key">
+                    열쇠
+                  </button>
+                </div>
+
+                <div id="interaction-lock-password-fields" hidden>
+                  <label htmlFor="interaction-lock-password-input">정답 코드</label>
+                  <input id="interaction-lock-password-input" type="text" inputMode="numeric" placeholder="예: 1234" />
+                </div>
+
+                <div id="interaction-lock-button-fields" hidden>
+                  <label htmlFor="interaction-lock-button-select">필요한 버튼</label>
+                  <select id="interaction-lock-button-select" />
+                  <p className="help">이 방에 배치된 "버튼" 상호작용 오브젝트 중에서 선택하세요.</p>
+                </div>
+
+                <div id="interaction-lock-key-fields" hidden>
+                  <p className="help">준비 중입니다. 인벤토리 시스템이 생기면 필요한 열쇠 아이템을 여기서 지정할 수 있게 됩니다.</p>
                 </div>
               </div>
             </div>
@@ -323,6 +363,28 @@ export default function Editor({ mapId, onBack }) {
           </button>
           <div id="choice-modal-options" className="choice-modal-options" />
           <p id="choice-modal-result" className="choice-modal-result" hidden />
+        </div>
+      </div>
+
+      <div id="password-modal" className="choice-modal-overlay" hidden>
+        <div className="choice-modal password-modal">
+          <button type="button" id="password-modal-close" className="choice-modal-close" aria-label="닫기">
+            ×
+          </button>
+          <p className="password-modal-title">잠겨 있습니다. 비밀번호를 입력하세요.</p>
+          <input
+            id="password-modal-input"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            className="password-modal-input"
+          />
+          <p id="password-modal-error" className="password-modal-error" hidden>
+            틀렸습니다. 다시 시도해 주세요.
+          </p>
+          <button type="button" id="password-modal-confirm" className="primary-button">
+            확인
+          </button>
         </div>
       </div>
 

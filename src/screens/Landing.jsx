@@ -1,10 +1,10 @@
+import CharacterBackdrop from './CharacterBackdrop.jsx';
+
 export default function Landing({ onEnterLobby, onEnterMapEditor }) {
   return (
     <div className="screen landing-screen">
       <div className="landing-image-placeholder">
-        게임 이미지
-        <br />
-        (차후 추가)
+        <CharacterBackdrop />
       </div>
 
       <div className="landing-actions">

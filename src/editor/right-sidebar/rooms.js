@@ -42,6 +42,12 @@ export function initRooms(ctx) {
     ctx.rooms.forEach((room) => {
       room.root.visible = room.instanceId === ctx.currentRoomInstanceId;
     });
+    // Single choke point for "which room is current changed" — every place
+    // that flips ctx.currentRoomInstanceId calls this already, so hooking
+    // the ghost refresh in here means none of them can forget to do it
+    // themselves (deleteRoom was one that did, leaving the old room's linked
+    // ghosts on screen after the room it belonged to was gone).
+    if (ctx.currentMode === 'editor') ctx.refreshRoomLinkGhostsForCurrentRoom?.();
   };
 
   ctx.ensureDefaultRoom = () => {
@@ -96,6 +102,7 @@ export function initRooms(ctx) {
   ctx.selectRoom = async (room) => {
     ctx.multiSelection.clear();
     ctx.selectedEditorObject = null;
+    ctx.selectedDoorEdge = null;
     ctx.transformControls.detach();
     ctx.currentRoomInstanceId = room.instanceId;
 

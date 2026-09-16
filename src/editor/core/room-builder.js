@@ -240,6 +240,7 @@ export function initRoomBuilder(ctx) {
   ctx.computeBoundaryEdges = computeBoundaryEdges;
   ctx.edgeKey = edgeKey;
   ctx.wallHeight = WALL_HEIGHT;
+  ctx.floorColor = FLOOR_COLOR;
 
   ctx.buildRoomWalls = (room, cells, doorEdges = []) => {
     // Rebuilding replaces both the wall geometry and whatever door models
@@ -469,6 +470,13 @@ export function initRoomBuilder(ctx) {
   // pickers always agree on which room is "current."
   ctx.switchRoomBuilderRoom = async (room) => {
     if (!room || room.instanceId === ctx.currentRoomInstanceId) return;
+    // Clear the OLD room's link ghosts/highlights immediately — startRoomEditor
+    // (below) only rebuilds them for the new room once it actually runs, and
+    // if the target room needs a lazy load first, that leaves an async gap
+    // where the previous room's ghosts are still in the scene despite its
+    // own geometry already being hidden. Without this, that gap is enough to
+    // catch a leftover ghost (with its faded-but-still-real shadow) on screen.
+    ctx.hideRoomLinkVisuals?.();
     ctx.currentRoomInstanceId = room.instanceId;
     // startRoomEditor doesn't touch room visibility on its own — it assumes
     // whatever room was already visible (set by applyRoomVisibility back in
