@@ -6,6 +6,7 @@ export function initMode(ctx) {
   ctx.isShiftHeld = false;
 
   let toastHideTimer = null;
+  ctx.addDisposer(() => clearTimeout(toastHideTimer));
   ctx.showCenterToast = (message, durationMs = 2600) => {
     ctx.centerToastText.textContent = message;
     ctx.centerToast.hidden = false;
@@ -39,39 +40,69 @@ export function initMode(ctx) {
     document.body.dataset.mode = mode;
     const isEditor = mode === 'editor';
     const isMovement = mode === 'movement';
-    const isRoomBuilder = mode === 'roomBuilder';
+    const isRoomBuilder = mode === 'roomBuilder'; // 타일 수정
+    const isRoomLink = mode === 'roomLink'; // 방 연결
+    const isRoomEditing = isRoomBuilder || isRoomLink; // what the two share: top view, room list, no object editing
 
-    $$('.mode-button').forEach((button) => {
+    // A mode button was pressed. Leaving a room-editing mode drops the room draft
+  // (asking first if tile changes weren't applied); entering one loads the
+  // current room into it.
+  ctx.requestMode = (mode) => {
+    const from = ctx.currentMode;
+    if (mode === from) return;
+    const fromRoomEditing = from === 'roomBuilder' || from === 'roomLink';
+    const toRoomEditing = mode === 'roomBuilder' || mode === 'roomLink';
+    if (fromRoomEditing && ctx.isRoomDraftDirty?.() && !window.confirm('적용하지 않은 타일 변경이 사라집니다. 계속할까요?')) {
+      return;
+    }
+    if (toRoomEditing) {
+      ctx.startRoomEditor(mode);
+      return;
+    }
+    if (fromRoomEditing) ctx.leaveRoomEditing();
+    ctx.setMode(mode);
+  };
+
+  $$('.mode-button').forEach((button) => {
       button.classList.toggle('is-active', button.dataset.mode === mode);
     });
     ctx.sidebarLeft.hidden = !isEditor;
     ctx.sidebarRight.hidden = !isEditor;
     ctx.editorHint.hidden = !isEditor;
     ctx.viewSwitch.hidden = !isEditor;
-    ctx.modeSwitch.hidden = isRoomBuilder;
+    // Drawing a brand-new room (nothing being edited yet) is its own flow with
+    // its own apply/cancel; the mode tabs only make sense for an existing room.
+    ctx.modeSwitch.hidden = isRoomEditing && ctx.editingRoomInstanceId == null;
     ctx.roomBuilderPanel.hidden = !isRoomBuilder;
     ctx.roomBuilderNamePanel.hidden = !isRoomBuilder;
     ctx.roomTexturePanel.hidden = !isRoomBuilder;
-    ctx.roomLinkPanel.hidden = !isRoomBuilder;
-    if (isRoomBuilder) {
-      ctx.renderRoomBuilderRoomList?.();
+    ctx.roomLinkPanel.hidden = !isRoomLink;
+    ctx.roomListPanel.hidden = !isRoomEditing;
+    if (isRoomEditing) ctx.renderRoomBuilderRoomList?.();
+    if (isRoomLink) {
       ctx.renderRoomLinkPanel();
+    } else if (isRoomBuilder) {
+      ctx.cancelDoorEdgePicking?.();
+      ctx.hideRoomLinkVisuals?.();
     } else if (isEditor) {
       ctx.cancelDoorEdgePicking?.();
       ctx.refreshRoomLinkGhostsForCurrentRoom?.();
+      // Doors are added/removed in room-builder mode; the interaction tab's
+      // list of this room's doors would otherwise still show the old ones.
+      ctx.updateInteractionFromSelection?.();
     } else {
       ctx.hideRoomLinkVisuals?.();
     }
     ctx.character.visible = isMovement;
     ctx.destinationMarker.visible = isMovement && ctx.isMoving;
-    ctx.orbitControls.enabled = isEditor || isRoomBuilder;
-    ctx.orbitControls.mouseButtons.LEFT = isRoomBuilder ? null : THREE.MOUSE.PAN;
-    ctx.orbitControls.enableRotate = !isRoomBuilder;
+    ctx.orbitControls.enabled = isEditor || isRoomEditing;
+    ctx.orbitControls.mouseButtons.LEFT = isRoomEditing ? null : THREE.MOUSE.PAN;
+    ctx.orbitControls.enableRotate = !isRoomEditing;
     ctx.updateGizmoVisibility();
     ctx.selectionOutlineGroup.visible = isEditor;
 
-    ctx.floor.visible = isEditor || isRoomBuilder;
-    ctx.grid.visible = isEditor || isRoomBuilder;
+    ctx.floor.visible = isEditor || isRoomEditing;
+    ctx.grid.visible = isEditor || isRoomEditing;
 
     if (isMovement) {
       ctx.placedObjects
@@ -90,50 +121,20 @@ export function initMode(ctx) {
     }
 
     ctx.pressedKeys.clear();
-    if (isRoomBuilder) {
+    if (isRoomEditing) {
       ctx.applyEditorView('top');
     } else if (isEditor) {
       ctx.applyEditorView(ctx.editorView);
     } else {
-      ctx.resetCharacterMovement();
-      ctx.pressedButtonInstanceIds?.clear();
-      ctx.unlockedPasswordDoors?.clear();
-      ctx.editorLayoutBounds = ctx.computeEditorLayoutBounds();
-
-      const spawnPoint = ctx.placedObjects.find(
-        (object) =>
-          object.userData.isSpawnPoint && ctx.getObjectRoomInstanceId(object) === ctx.currentRoomInstanceId,
-      );
-
-      if (spawnPoint) {
-        ctx.character.position.set(spawnPoint.position.x, 0, spawnPoint.position.z);
-        ctx.character.rotation.y = spawnPoint.rotation.y;
-      } else if (ctx.editorLayoutBounds) {
-        const centerX = (ctx.editorLayoutBounds.min.x + ctx.editorLayoutBounds.max.x) / 2;
-        const centerZ = (ctx.editorLayoutBounds.min.z + ctx.editorLayoutBounds.max.z) / 2;
-        const spawn = ctx.findValidSpawnPosition(centerX, centerZ);
-        ctx.character.position.set(spawn.x, 0, spawn.z);
-      }
-      ctx.startCharacterFall();
-      // Editor-mode mouse-wheel zoom (orbitControls.zoom) otherwise carries
-      // over untouched into movement mode, so the play-test view would look
-      // different depending on whatever zoom level was left over from editing.
-      ctx.camera.zoom = 1;
-      ctx.resetMovementCameraZoom();
-      ctx.camera.position.copy(ctx.character.position).add(ctx.cameraOffset);
-      ctx.camera.lookAt(
-        ctx.character.position.x,
-        ctx.character.position.y + 0.65,
-        ctx.character.position.z,
-      );
+      ctx.playState.reset();
+      ctx.spawnLocalPlayer();
     }
     ctx.updateCameraProjection();
   };
 
   $$('.mode-button').forEach((button) => {
     button.addEventListener('click', () => {
-      if (button.dataset.mode === 'roomBuilder') ctx.startRoomEditor();
-      else ctx.setMode(button.dataset.mode);
+      ctx.requestMode(button.dataset.mode);
     });
   });
 
@@ -141,7 +142,7 @@ export function initMode(ctx) {
     button.addEventListener('click', () => ctx.setTransformMode(button.dataset.transform));
   });
 
-  window.addEventListener('keydown', (event) => {
+  ctx.listen(window, 'keydown', (event) => {
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
@@ -176,7 +177,7 @@ export function initMode(ctx) {
     ctx.pressedKeys.add(event.code);
   });
 
-  window.addEventListener('keyup', (event) => {
+  ctx.listen(window, 'keyup', (event) => {
     if (event.key === 'Shift') {
       ctx.isShiftHeld = false;
       ctx.updateGizmoVisibility();
@@ -186,13 +187,9 @@ export function initMode(ctx) {
     ctx.pressedKeys.delete(event.code);
   });
 
-  window.addEventListener('blur', () => {
+  ctx.listen(window, 'blur', () => {
     ctx.pressedKeys.clear();
     ctx.isShiftHeld = false;
     ctx.updateGizmoVisibility();
-  });
-  window.addEventListener('resize', () => {
-    ctx.renderer.setSize(window.innerWidth, window.innerHeight);
-    ctx.updateCameraProjection();
   });
 }

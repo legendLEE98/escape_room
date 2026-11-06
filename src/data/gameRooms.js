@@ -1,38 +1,35 @@
-const GAME_ROOMS_KEY = 'escape-room-game-rooms-v1';
-
-function readRooms() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(GAME_ROOMS_KEY) || '[]');
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
+// Game rooms live on the server (Redis) so everyone sees the same list. Only
+// browsing is open to everyone; creating one needs an identity (login or guest).
+async function request(path, options) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (response.status === 204) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || `요청에 실패했습니다. (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
+  return data;
 }
 
-function writeRooms(rooms) {
-  localStorage.setItem(GAME_ROOMS_KEY, JSON.stringify(rooms));
+export function listGameRooms(query = '') {
+  return request(`/api/game-rooms?q=${encodeURIComponent(query.trim())}`);
 }
 
-export function listGameRooms() {
-  return readRooms();
+// { title, mapCode, maxUser } -> the new room. The server reads the map by its
+// share code itself; the client only says which one.
+export function createGameRoom(input) {
+  return request('/api/game-rooms', { method: 'POST', body: JSON.stringify(input) });
 }
 
-export function createGameRoom({ title, mapId, maxUser }) {
-  const rooms = readRooms();
-  const room = {
-    id: crypto.randomUUID(),
-    title: title.trim() || '이름 없는 방',
-    mapId,
-    maxUser,
-    // No backend/session tracking yet — always starts at 1 (the host).
-    currentUser: 1,
-    status: 'waiting',
-    createdAt: Date.now(),
-  };
-  writeRooms([...rooms, room]);
-  return room;
+export function closeGameRoom(id) {
+  return request(`/api/game-rooms/${id}`, { method: 'DELETE' });
 }
 
-export function deleteGameRoom(id) {
-  writeRooms(readRooms().filter((room) => room.id !== id));
+// The pinned layout of a started room (members only).
+export function getRoomLayout(id) {
+  return request(`/api/game-rooms/${id}/layout`);
 }

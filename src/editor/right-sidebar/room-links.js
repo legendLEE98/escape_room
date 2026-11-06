@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { normalizeAsset } from '../assets/catalog.js';
-import { edgeMidpoint } from '../core/room-doors.js';
+import { normalizeAsset } from '../../engine/asset-loader.js';
+import { edgeMidpoint } from '../../engine/room-doors.js';
+import { createWorldLabel } from '../../engine/name-tag.js';
 
 // Given a wall edge on the "anchor" room and a candidate offset for the
 // "other" room (in the anchor room's local frame), finds the cell+side on
@@ -57,33 +58,14 @@ export function initRoomLinks(ctx) {
   // between them. Falls back to "the one edge in targetRoom pointing back
   // to this room" for edges saved before doorId existed, which only works
   // because room-links.js still only allows one door per room pair.
-  function findMirrorEdge(room, targetRoom, edge) {
-    const edges = targetRoom.doorEdges || [];
-    if (edge.doorId) {
-      const byId = edges.find((candidate) => candidate.doorId === edge.doorId);
-      if (byId) return byId;
-    }
-    return edges.find((candidate) => candidate.connectedRoomInstanceId === room.instanceId) || null;
-  }
-  ctx.findDoorMirrorEdge = findMirrorEdge;
-
-  // A door is one physical object, but it's stored as two independent edge
-  // records (one per room, each with its own x/z/side in that room's local
-  // frame). Lock state should still be a single shared thing, though — a
-  // door isn't unlocked from one side and locked from the other — so both
-  // directions resolve to the same "canonical" edge (deterministically
-  // whichever room has the smaller instanceId) for every lockType/password/
-  // requiredButtonInstanceId read or write. The non-canonical edge's own
-  // copies of those fields are simply never touched again.
-  ctx.resolveCanonicalDoorEdge = (room, edge) => {
-    const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
-    if (!targetRoom || room.instanceId <= targetRoom.instanceId) return { room, edge };
-    const mirror = findMirrorEdge(room, targetRoom, edge);
-    return mirror ? { room: targetRoom, edge: mirror } : { room, edge };
-  };
   ctx.isPickingDoorEdge = false;
   ctx.isPositioningGhost = false;
   let pickingTargetRoomInstanceId = null;
+  // Picking a wall for an exit (a door out of the map) instead of for a link
+  // to another room; `exitReturnToEditor` means it was started from the
+  // objects tab, so finishing/cancelling goes back there.
+  let pickingExit = false;
+  let exitReturnToEditor = false;
   let pickedEdge = null;
   let ghostOffset = { x: 0, z: 0 };
   let isDraggingGhost = false;
@@ -215,6 +197,14 @@ export function initRoomLinks(ctx) {
       mesh.receiveShadow = false;
       group.add(mesh);
     });
+
+    // The room's name, in the middle of its footprint, so each translucent
+    // room can be told apart.
+    if (cells.length) {
+      const centerX = cells.reduce((sum, cell) => sum + cell.x + 0.5, 0) / cells.length + offsetX;
+      const centerZ = cells.reduce((sum, cell) => sum + cell.z + 0.5, 0) / cells.length + offsetZ;
+      group.add(createWorldLabel(ctx, room.name, new THREE.Vector3(centerX, 0.3, centerZ)));
+    }
 
     return group;
   }
@@ -393,7 +383,9 @@ export function initRoomLinks(ctx) {
 
       const label = document.createElement('span');
       label.className = 'room-link-row-label';
-      label.textContent = `→ ${targetRoom ? targetRoom.name : '(삭제된 방)'} · ${edge.side}쪽 벽`;
+      label.textContent = edge.isExit
+        ? `탈출구 · ${edge.side}쪽 벽`
+        : `→ ${targetRoom ? targetRoom.name : '(삭제된 방)'} · ${edge.side}쪽 벽`;
       row.append(label);
 
       const removeButton = document.createElement('button');
@@ -412,7 +404,10 @@ export function initRoomLinks(ctx) {
           );
           if (targetRoom.floorCells) ctx.buildRoomWalls(targetRoom, targetRoom.floorCells, targetRoom.doorEdges);
         }
+        // A removed door can't stay selected in the interaction panel.
+        if (ctx.selectedDoorEdge) ctx.selectedDoorEdge = null;
         ctx.renderRoomLinkPanel();
+        ctx.updateInteractionFromSelection();
         ctx.saveLayout();
       });
       row.append(removeButton);
@@ -449,9 +444,9 @@ export function initRoomLinks(ctx) {
     furnitureLoadToken += 1; // invalidate any in-flight furniture load
     clearWallNavigator();
     ctx.roomLinkPositionPanel.hidden = true;
-    if (ctx.currentMode === 'roomBuilder') ctx.roomBuilderPanel.hidden = false;
     if (ctx.isPickingDoorEdge) {
       ctx.isPickingDoorEdge = false;
+      pickingExit = false;
       pickingTargetRoomInstanceId = null;
       ctx.roomLinkStatus.textContent = '';
     }
@@ -503,6 +498,63 @@ export function initRoomLinks(ctx) {
     }
   };
 
+  // Adds an exit on `edge`: a door that leads out of the map. It lives in
+  // room.doorEdges flagged isExit (see layout-loader.js / persistence.js).
+  function createExit(room, cells, edge) {
+    const exitEdge = {
+      x: edge.x,
+      z: edge.z,
+      side: edge.side,
+      isExit: true,
+      connectedRoomInstanceId: null,
+      doorId: crypto.randomUUID(),
+      lockType: 'none',
+      password: '',
+      requiredButtonInstanceId: null,
+      requiredButtonSavedId: null,
+    };
+    ctx.buildRoomWalls(room, cells, [...(room.doorEdges || []), exitEdge]);
+    const goBack = exitReturnToEditor;
+    exitReturnToEditor = false;
+    ctx.cancelDoorEdgePicking();
+    ctx.saveLayout();
+    ctx.showCenterToast('탈출구를 추가했습니다.');
+    if (goBack) {
+      ctx.leaveRoomEditing();
+      ctx.setMode('editor');
+      // The click that picked the wall is about to land on the canvas in
+      // editor mode too, where it would deselect again.
+      ctx.suppressNextCanvasClick = true;
+      // Straight to its lock settings.
+      ctx.selectDoorForInteraction(room, exitEdge);
+      ctx.setRightTab('interaction');
+      return;
+    }
+    renderLinkList(room);
+    renderDoorEdgeHighlights(room);
+    ctx.updateInteractionFromSelection();
+  }
+
+  // Starts picking a wall for a new exit. From the objects tab
+  // (returnToEditor) this hops into 방 연결 for the wall pick and back out after.
+  ctx.startExitPicking = ({ returnToEditor = false } = {}) => {
+    if (ctx.currentMode !== 'roomLink') ctx.requestMode('roomLink');
+    if (ctx.currentMode !== 'roomLink') return; // the user declined to leave unapplied tile changes
+    const room = currentEditingRoom();
+    if (!room?.floorCells?.length) {
+      ctx.showCenterToast('먼저 바닥을 그려서 방을 만들어 주세요.');
+      return;
+    }
+    pickingExit = true;
+    exitReturnToEditor = returnToEditor;
+    ctx.isPickingDoorEdge = true;
+    renderWallNavigator(room, Array.from(ctx.roomDraftCells.values()));
+    ctx.roomLinkStatus.textContent = '탈출구를 놓을 벽을 클릭하세요 (Esc로 취소)';
+    ctx.showCenterToast('탈출구를 놓을 벽을 클릭하세요. (Esc: 취소)');
+  };
+
+  ctx.roomExitAddButton.addEventListener('click', () => ctx.startExitPicking());
+
   ctx.roomLinkAddButton.addEventListener('click', () => {
     const room = currentEditingRoom();
     if (!room || !ctx.roomLinkTargetSelect.value) return;
@@ -512,8 +564,8 @@ export function initRoomLinks(ctx) {
     ctx.roomLinkStatus.textContent = '문을 놓을 벽을 클릭하세요 (Esc로 취소)';
   });
 
-  ctx.canvas.addEventListener('pointerdown', (event) => {
-    if (ctx.currentMode !== 'roomBuilder' || event.button !== 0) return;
+  ctx.listen(ctx.canvas, 'pointerdown', (event) => {
+    if (ctx.currentMode !== 'roomLink' || event.button !== 0) return;
 
     if (ctx.isPickingDoorEdge) {
       const room = currentEditingRoom();
@@ -521,6 +573,18 @@ export function initRoomLinks(ctx) {
       const edge = findNearestEdge(event, cells);
       if (!room || !edge) {
         ctx.roomLinkStatus.textContent = '벽 근처를 클릭해 주세요.';
+        return;
+      }
+
+      if (pickingExit) {
+        const alreadyDoor = (room.doorEdges || []).some(
+          (existing) => ctx.edgeKey(existing.x, existing.z, existing.side) === ctx.edgeKey(edge.x, edge.z, edge.side),
+        );
+        if (alreadyDoor) {
+          ctx.roomLinkStatus.textContent = '이미 문이 있는 벽이에요. 다른 벽을 클릭해 주세요.';
+          return;
+        }
+        createExit(room, cells, edge);
         return;
       }
 
@@ -548,7 +612,6 @@ export function initRoomLinks(ctx) {
           activeFurnitureGroup.add(loaded);
         });
       }
-      ctx.roomBuilderPanel.hidden = true;
       ctx.roomLinkPositionPanel.hidden = false;
       ctx.roomLinkPositionStatus.textContent = '반투명 방을 드래그해서 위치를 맞추고 "링크 확정"을 누르세요 (Esc로 취소)';
       return;
@@ -562,8 +625,8 @@ export function initRoomLinks(ctx) {
     }
   });
 
-  ctx.canvas.addEventListener('pointermove', (event) => {
-    if (ctx.currentMode !== 'roomBuilder' || !ctx.isPickingDoorEdge) return;
+  ctx.listen(ctx.canvas, 'pointermove', (event) => {
+    if (ctx.currentMode !== 'roomLink' || !ctx.isPickingDoorEdge) return;
     const cells = Array.from(ctx.roomDraftCells.values());
     const edge = findNearestEdge(event, cells);
     if (!edge) {
@@ -578,8 +641,8 @@ export function initRoomLinks(ctx) {
     ctx.canvas.style.cursor = 'pointer';
   });
 
-  window.addEventListener('pointermove', (event) => {
-    if (!isDraggingGhost || ctx.currentMode !== 'roomBuilder') return;
+  ctx.listen(window, 'pointermove', (event) => {
+    if (!isDraggingGhost || ctx.currentMode !== 'roomLink') return;
     ctx.setPointer(event);
     if (!ctx.raycaster.ray.intersectPlane(groundPlane, groundHit)) return;
     const rawX = dragStartOffset.x + (groundHit.x - dragStartHit.x);
@@ -592,7 +655,7 @@ export function initRoomLinks(ctx) {
     activeFurnitureGroup.position.set(ghostOffset.x, 0, ghostOffset.z);
   });
 
-  window.addEventListener('pointerup', () => {
+  ctx.listen(window, 'pointerup', () => {
     isDraggingGhost = false;
   });
 
@@ -641,7 +704,7 @@ export function initRoomLinks(ctx) {
     }
 
     // Shared by both sides so they can find each other unambiguously (see
-    // findMirrorEdge above) instead of inferring it from "the only edge
+    // ctx.findDoorMirrorEdge) instead of inferring it from "the only edge
     // pointing at that room" — the latter breaks the moment a room pair
     // ever has more than one door between them.
     const doorId = crypto.randomUUID();
@@ -671,12 +734,23 @@ export function initRoomLinks(ctx) {
     renderTargetOptions(room);
     renderDoorEdgeHighlights(room);
     renderLinkedGhosts(room);
+    // The interaction tab lists this room's doors; it only redraws on a
+    // selection change, so tell it a door was just added.
+    ctx.updateInteractionFromSelection();
     ctx.saveLayout();
   });
 
   ctx.roomLinkCancelButton.addEventListener('click', ctx.cancelDoorEdgePicking);
 
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'Escape' && (ctx.isPickingDoorEdge || ctx.isPositioningGhost)) ctx.cancelDoorEdgePicking();
+  ctx.listen(window, 'keydown', (event) => {
+    if (event.code === 'Escape' && (ctx.isPickingDoorEdge || ctx.isPositioningGhost)) {
+      const goBack = pickingExit && exitReturnToEditor;
+      exitReturnToEditor = false;
+      ctx.cancelDoorEdgePicking();
+      if (goBack) {
+        ctx.leaveRoomEditing();
+        ctx.setMode('editor');
+      }
+    }
   });
 }

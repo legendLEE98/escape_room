@@ -4,10 +4,15 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
-export function buildSceneObjects(canvas) {
+// Renderer, scene, lights, camera and the click-to-walk surface. `editorTools`
+// adds what only the editor needs: the build grid and ground disc, orbit
+// controls and the transform gizmo. The game client leaves it off. `sizeToWindow`
+// is false when the canvas lives in a layout box rather than filling the window.
+export function buildSceneObjects(canvas, { editorTools = true, sizeToWindow = true } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  // The game sizes the renderer to its canvas box instead (camera-projection).
+  if (sizeToWindow) renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -40,23 +45,27 @@ export function buildSceneObjects(canvas) {
   rimLight.position.set(-5, 4, -4);
   scene.add(rimLight);
 
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(18, 96),
-    new THREE.MeshStandardMaterial({
-      color: '#17202c',
-      roughness: 0.92,
-      metalness: 0.05,
-    }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
-  scene.add(floor);
+  let floor = null;
+  let grid = null;
+  if (editorTools) {
+    floor = new THREE.Mesh(
+      new THREE.CircleGeometry(18, 96),
+      new THREE.MeshStandardMaterial({
+        color: '#17202c',
+        roughness: 0.92,
+        metalness: 0.05,
+      }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
 
-  const grid = new THREE.GridHelper(30, 30, '#4b6079', '#253246');
-  grid.position.y = 0.01;
-  grid.material.opacity = 0.38;
-  grid.material.transparent = true;
-  scene.add(grid);
+    grid = new THREE.GridHelper(30, 30, '#4b6079', '#253246');
+    grid.position.y = 0.01;
+    grid.material.opacity = 0.38;
+    grid.material.transparent = true;
+    scene.add(grid);
+  }
 
   const navigationSurface = new THREE.Mesh(
     new THREE.PlaneGeometry(40, 40),
@@ -88,31 +97,45 @@ export function buildSceneObjects(canvas) {
   const character = new THREE.Group();
   scene.add(character);
 
-  const editorRoot = new THREE.Group();
-  editorRoot.name = 'Editor objects';
-  scene.add(editorRoot);
+  const worldRoot = new THREE.Group();
+  worldRoot.name = 'World';
+  scene.add(worldRoot);
 
-  const orbitControls = new OrbitControls(camera, canvas);
-  orbitControls.enabled = false;
-  orbitControls.enableDamping = true;
-  orbitControls.dampingFactor = 0.08;
-  orbitControls.screenSpacePanning = true;
-  orbitControls.target.set(0, 0.8, 0);
-  orbitControls.mouseButtons.LEFT = THREE.MOUSE.PAN;
-  orbitControls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
-  orbitControls.minZoom = 0.35;
-  orbitControls.maxZoom = 4;
+  let orbitControls = null;
+  let transformControls = null;
+  if (editorTools) {
+    orbitControls = new OrbitControls(camera, canvas);
+    orbitControls.enabled = false;
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.08;
+    orbitControls.screenSpacePanning = true;
+    orbitControls.target.set(0, 0.8, 0);
+    orbitControls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    orbitControls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+    orbitControls.minZoom = 0.35;
+    orbitControls.maxZoom = 4;
 
-  const transformControls = new TransformControls(camera, canvas);
-  transformControls.enabled = false;
-  transformControls.setSize(0.72);
-  transformControls.setMode('translate');
-  transformControls.setTranslationSnap(0.1);
-  transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
-  transformControls.setScaleSnap(0.1);
-  scene.add(transformControls.getHelper());
+    transformControls = new TransformControls(camera, canvas);
+    transformControls.enabled = false;
+    transformControls.setSize(0.72);
+    transformControls.setMode('translate');
+    transformControls.setTranslationSnap(0.1);
+    transformControls.setRotationSnap(THREE.MathUtils.degToRad(15));
+    transformControls.setScaleSnap(0.1);
+    scene.add(transformControls.getHelper());
+  }
+
+  // Releases the GPU context. Browsers cap live WebGL contexts, so a screen
+  // that's opened repeatedly must give its context back when it closes.
+  const disposeScene = () => {
+    orbitControls?.dispose();
+    transformControls?.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+  };
 
   return {
+    disposeScene,
     renderer,
     scene,
     camera,
@@ -125,7 +148,7 @@ export function buildSceneObjects(canvas) {
     navigationSurface,
     destinationMarker,
     character,
-    editorRoot,
+    worldRoot,
     orbitControls,
     transformControls,
   };

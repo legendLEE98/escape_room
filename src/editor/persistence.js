@@ -1,14 +1,38 @@
-const legacyLayoutStorageKey = 'escape-room-editor-layout-v1';
+const SAVE_INTERVAL_MS = 10000;
+const SAVE_RETRY_MS = 5000;
 
-function isLegacyFlatLayout(saved) {
-  return Array.isArray(saved) && saved.length > 0 && typeof saved[0].file === 'string';
-}
+const MANUAL_SAVE_STATUS_HIDE_MS = 2000;
+
+// Autosaves are silent; only manual saves (Ctrl+S) and failures are reported.
+const SAVE_STATUS_TEXT = {
+  saving: '저장 중...',
+  saved: '저장됨',
+  error: '저장 실패 — 다시 시도합니다',
+};
 
 export function initPersistence(ctx) {
-  ctx.layoutStorageKey =
-    ctx.mapId && ctx.mapId !== 'default'
-      ? `${legacyLayoutStorageKey}:${ctx.mapId}`
-      : legacyLayoutStorageKey;
+  // text === null hides the overlay. onRetry (optional) shows a retry button
+  // for the failed-load case.
+  ctx.setEditorLoading = (text, { onRetry = null } = {}) => {
+    ctx.editorLoading.hidden = text === null;
+    ctx.editorLoadingText.textContent = text ?? '';
+    ctx.editorLoadingRetry.hidden = !onRetry;
+    ctx.editorLoadingRetry.onclick = onRetry;
+  };
+
+  let saveStatusHideTimer = null;
+  // state === null hides the indicator. autoHideMs hides it again on its own.
+  ctx.setSaveStatus = (state, { autoHideMs = 0 } = {}) => {
+    clearTimeout(saveStatusHideTimer);
+    ctx.saveStatus.textContent = SAVE_STATUS_TEXT[state] ?? '';
+    ctx.saveStatus.dataset.state = state ?? '';
+    ctx.saveStatus.hidden = !SAVE_STATUS_TEXT[state];
+    if (autoHideMs > 0) {
+      saveStatusHideTimer = setTimeout(() => {
+        ctx.saveStatus.hidden = true;
+      }, autoHideMs);
+    }
+  };
 
   // A room that was never lazy-loaded has no live THREE.js objects to read from —
   // its only source of truth is the raw JSON it was parsed from (room._savedObjects).
@@ -17,7 +41,7 @@ export function initPersistence(ctx) {
   // it from live objects. Storing it as a separate frozen copy instead would create
   // two sources of truth that can drift apart.
   function serializeDoorEdges(room) {
-    return (room.doorEdges || []).map(
+    return (room.doorEdges || []).filter((edge) => !edge.isExit).map(
       ({
         x,
         z,
@@ -51,6 +75,24 @@ export function initPersistence(ctx) {
     );
   }
 
+  // Exits are kept in room.doorEdges at runtime (so the door rules, walls and
+  // models just work) but saved apart: they lead nowhere, so they don't belong
+  // in the list of doors that connect two rooms.
+  function serializeExitEdges(room) {
+    return (room.doorEdges || [])
+      .filter((edge) => edge.isExit)
+      .map(({ x, z, side, doorId, lockType, password, requiredButtonInstanceId, requiredButtonSavedId }) => ({
+        x,
+        z,
+        side,
+        exitId: doorId || null,
+        lockType: lockType || 'none',
+        password: password || '',
+        requiredButtonId:
+          requiredButtonInstanceId != null ? `obj-${requiredButtonInstanceId}` : requiredButtonSavedId || null,
+      }));
+  }
+
   function serializeUnloadedRoom(room) {
     const savedObjects = room._savedObjects ?? [];
     const spawnItem = savedObjects.find((item) => item.isSpawnPoint);
@@ -62,6 +104,7 @@ export function initPersistence(ctx) {
       initialSpawnPos: spawnItem ? spawnItem.transform.position : [0, 0, 0],
       floorCells: room.floorCells ?? null,
       doorEdges: serializeDoorEdges(room),
+      exitEdges: serializeExitEdges(room),
       worldOffset: room.worldOffset ?? { x: 0, z: 0 },
       objects: savedObjects,
     };
@@ -83,6 +126,7 @@ export function initPersistence(ctx) {
         initialSpawnPos: spawnObject ? spawnObject.position.toArray() : [0, 0, 0],
         floorCells: room.floorCells ?? null,
         doorEdges: serializeDoorEdges(room),
+      exitEdges: serializeExitEdges(room),
         worldOffset: room.worldOffset ?? { x: 0, z: 0 },
         objects: roomObjects.map((object) => ({
           id: `obj-${object.userData.instanceId}`,
@@ -115,209 +159,149 @@ export function initPersistence(ctx) {
     }),
   });
 
+  // False until the initial restore from the server has fully succeeded.
+  // Saves are ignored while false so a failed/partial load can never be
+  // autosaved over the server's real data (every save replaces the whole map).
+  ctx.layoutReady = false;
+
+  let saveTimer = null;
+  let inFlight = null;
+  let dirty = false;
+  // True from the first edit until a save of it has been sent successfully.
+  let unsaved = false;
+  // Exact JSON last confirmed saved (or loaded). A write whose payload is
+  // identical — e.g. an object moved and then moved back — is skipped.
+  let lastSyncedJson = null;
+  // Set by a manual save so the next write reports its progress/result.
+  let reportNextWrite = false;
+
+  ctx.addDisposer(() => {
+    clearTimeout(saveTimer);
+    clearTimeout(saveStatusHideTimer);
+  });
+
+  function scheduleWrite(delay) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      writeLayout();
+    }, delay);
+  }
+
+  function writeLayout({ keepalive = false } = {}) {
+    if (!ctx.layoutReady) return Promise.resolve();
+    if (inFlight) {
+      dirty = true;
+      return inFlight;
+    }
+    // A room whose objects are still streaming in is marked _loaded already,
+    // so serializing now would persist it half-empty. Wait for it instead.
+    if (ctx.roomLoadsInFlight > 0) {
+      scheduleWrite(300);
+      return Promise.resolve();
+    }
+
+    inFlight = (async () => {
+      do {
+        dirty = false;
+        unsaved = false;
+        const report = reportNextWrite;
+        reportNextWrite = false;
+        if (report) ctx.setSaveStatus('saving');
+        try {
+          const body = JSON.stringify(ctx.serializeLayout());
+          if (body !== lastSyncedJson) {
+            const response = await fetch(`/api/maps/${ctx.mapId}/layout`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body,
+              keepalive,
+            });
+            if (!response.ok) throw new Error(`Layout save failed: ${response.status}`);
+            lastSyncedJson = body;
+          }
+          if (report) {
+            ctx.setSaveStatus('saved', { autoHideMs: MANUAL_SAVE_STATUS_HIDE_MS });
+          } else if (ctx.saveStatus.dataset.state === 'error') {
+            ctx.setSaveStatus(null); // an earlier failure just got resolved
+          }
+        } catch (error) {
+          console.error(error);
+          ctx.setSaveStatus('error');
+          dirty = false;
+          unsaved = true;
+          scheduleWrite(SAVE_RETRY_MS);
+          return;
+        }
+      } while (dirty);
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  }
+
+  // Call sites invoke this after every single edit. The timer is NOT reset by
+  // later edits, so a save goes out at most SAVE_INTERVAL_MS after the first
+  // unsaved change even while editing continuously.
   ctx.saveLayout = () => {
-    localStorage.setItem(ctx.layoutStorageKey, JSON.stringify(ctx.serializeLayout()));
+    if (!ctx.layoutReady) return;
+    unsaved = true;
+    if (saveTimer === null) scheduleWrite(SAVE_INTERVAL_MS);
   };
 
-  function collectRestoreItems(saved) {
-    if (isLegacyFlatLayout(saved)) {
-      ctx.ensureDefaultRoom();
-      return saved.map((item) => ({
-        asset: ctx.assetCatalog.find((candidate) => candidate.file === item.file),
-        name: item.name,
-        position: item.position,
-        rotation: item.rotation,
-        scale: item.scale,
-        roomInstanceId: ctx.currentRoomInstanceId,
-        blocksMovement: true,
-        colliderShape: 'box',
-        useGravity: false,
-      }));
+  // Skips the interval wait — manual save (Ctrl+S, manual: true) and leaving
+  // the editor (silent).
+  ctx.flushLayout = ({ manual = false, keepalive = false } = {}) => {
+    if (!ctx.layoutReady) return Promise.resolve();
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (manual) reportNextWrite = true;
+    if (!unsaved && !inFlight) {
+      reportNextWrite = false;
+      if (manual) ctx.setSaveStatus('saved', { autoHideMs: MANUAL_SAVE_STATUS_HIDE_MS });
+      return Promise.resolve();
     }
-
-    const savedRooms = Array.isArray(saved) ? saved : saved.rooms || [];
-    const roomIdMap = new Map();
-    ctx.rooms = savedRooms.map((savedRoom, index) => {
-      const room = ctx.createRoom(savedRoom.roomName || `방${index + 1}`, Boolean(savedRoom.isStartRoom));
-      room.worldOffset = savedRoom.worldOffset ?? { x: 0, z: 0 };
-      if (savedRoom.floorCells?.length) ctx.buildRoomFloor(room, savedRoom.floorCells);
-      // Keep the raw saved objects around so an unopened room can still be
-      // round-tripped through save/restore without ever being instantiated —
-      // initialSpawnPos is re-derived from these, not stored separately.
-      room._savedObjects = savedRoom.objects || [];
-      room._loaded = false;
-      roomIdMap.set(savedRoom.id, room.instanceId);
-      return room;
-    });
-
-    // Walls are built only now, in a second pass — doorEdges reference other
-    // rooms by their saved id, which roomIdMap can only resolve once every
-    // room above has been created.
-    savedRooms.forEach((savedRoom, index) => {
-      const room = ctx.rooms[index];
-      if (!savedRoom.floorCells?.length) return;
-      const doorEdges = (savedRoom.doorEdges || []).map(
-        ({ x, z, side, connectedRoomId, doorId, lockType, password, requiredButtonId }) => {
-          const edge = {
-            x,
-            z,
-            side,
-            connectedRoomInstanceId: connectedRoomId ? roomIdMap.get(connectedRoomId) ?? null : null,
-            doorId: doorId || null,
-            lockType: lockType || 'none',
-            password: password || '',
-            // Resolved lazily once the button's own room actually loads and
-            // its object gets a live instanceId — see resolvePendingDoorButtonLinks.
-            requiredButtonInstanceId: null,
-            requiredButtonSavedId: requiredButtonId || null,
-          };
-          if (requiredButtonId) ctx.pendingDoorButtonLinks.push(edge);
-          return edge;
-        },
-      );
-      ctx.buildRoomWalls(room, savedRoom.floorCells, doorEdges);
-    });
-
-    savedRooms.forEach((savedRoom, index) => {
-      const room = ctx.rooms[index];
-      room._pendingItems = (savedRoom.objects || []).map((item) => {
-        const interaction = item.interaction || {};
-        return {
-          asset: item.glbUrl ? ctx.assetCatalog.find((candidate) => candidate.url === item.glbUrl) : null,
-          isEmpty: !item.glbUrl,
-          isSpawnPoint: Boolean(item.isSpawnPoint),
-          name: item.name,
-          position: item.transform.position,
-          rotation: item.transform.rotation,
-          scale: item.transform.scale,
-          roomInstanceId: room.instanceId,
-          blocksMovement: item.blocksMovement ?? true,
-          colliderShape: item.colliderShape ?? 'box',
-          useGravity: item.useGravity ?? false,
-          interactionType: interaction.interactionType ?? null,
-          bgImageUrl: interaction.bgImageUrl ?? null,
-          memoText: interaction.memoText ?? null,
-          choiceOptions: interaction.choiceOptions ?? null,
-          visible: item.visible ?? true,
-          savedId: item.id,
-          parentObjectId: item.parentObjectId ?? null,
-        };
-      });
-    });
-
-    ctx.ensureDefaultRoom();
-    ctx.currentRoomInstanceId = ctx.rooms[0].instanceId;
-    return null;
-  }
-
-  // Shared across every room load in this session so parent/child links that
-  // cross room boundaries still resolve once both sides have been loaded.
-  ctx.crossRoomIdMap = new Map();
-  ctx.pendingParentLinks = [];
-  // Door-edge lock configs referencing a "button" object by its saved id —
-  // that object may live in a room that hasn't been opened (lazy-loaded)
-  // yet, so the edge just holds requiredButtonSavedId until then.
-  ctx.pendingDoorButtonLinks = [];
-
-  function resolvePendingParentLinks() {
-    ctx.pendingParentLinks = ctx.pendingParentLinks.filter((link) => {
-      const child = ctx.crossRoomIdMap.get(link.savedId);
-      const parent = ctx.crossRoomIdMap.get(link.parentObjectId);
-      if (!child || !parent || child === parent) return true;
-      parent.add(child);
-      child.userData.parentInstanceId = parent.userData.instanceId;
-      return false;
-    });
-  }
-
-  function resolvePendingDoorButtonLinks() {
-    ctx.pendingDoorButtonLinks = ctx.pendingDoorButtonLinks.filter((edge) => {
-      const container = ctx.crossRoomIdMap.get(edge.requiredButtonSavedId);
-      if (!container) return true;
-      edge.requiredButtonInstanceId = container.userData.instanceId;
-      return false;
-    });
-  }
-
-  // loadNeighbors: false is used when THIS call is itself loading a
-  // neighbor, so we load one ring of directly-connected rooms out and stop —
-  // not the whole connected graph transitively.
-  ctx.loadRoomContents = async (room, { loadNeighbors = true } = {}) => {
-    if (room._loaded) return;
-    room._loaded = true;
-    const items = room._pendingItems || [];
-
-    for (const item of items) {
-      let container = null;
-      if (item.isSpawnPoint) {
-        container = ctx.addSpawnPoint(item, false);
-      } else if (item.isEmpty) {
-        container = ctx.addEmptyObject(item, false);
-      } else if (item.asset) {
-        container = await ctx.addAsset(item.asset, item, false);
-      }
-      if (container) {
-        container.visible = item.visible ?? true;
-      }
-      if (container && item.savedId) ctx.crossRoomIdMap.set(item.savedId, container);
-      if (container && item.parentObjectId) {
-        ctx.pendingParentLinks.push({ savedId: item.savedId, parentObjectId: item.parentObjectId });
-      }
-    }
-
-    delete room._pendingItems;
-    resolvePendingParentLinks();
-    resolvePendingDoorButtonLinks();
-
-    if (!loadNeighbors) return;
-    // Rooms directly connected by a door load together with this one — a
-    // button-locked door referencing an object in the next room over
-    // shouldn't have to wait for the player to separately walk in there.
-    const neighborRoomIds = new Set(
-      (room.doorEdges || []).map((edge) => edge.connectedRoomInstanceId).filter((id) => id != null),
-    );
-    await Promise.all(
-      Array.from(neighborRoomIds).map((id) => {
-        const neighbor = ctx.rooms.find((candidate) => candidate.instanceId === id);
-        return neighbor ? ctx.loadRoomContents(neighbor, { loadNeighbors: false }) : null;
-      }),
-    );
+    return writeLayout({ keepalive });
   };
 
   ctx.restoreLayout = async () => {
+    ctx.setEditorLoading('맵을 불러오는 중...');
     let saved;
     try {
-      saved = JSON.parse(localStorage.getItem(ctx.layoutStorageKey) || '[]');
-    } catch {
-      saved = [];
-    }
-    const hasData = Array.isArray(saved) ? saved.length > 0 : Boolean(saved?.rooms?.length);
-    if (!hasData) {
-      ctx.ensureDefaultRoom();
-      ctx.syncHierarchy();
+      const response = await fetch(`/api/maps/${ctx.mapId}/layout`);
+      if (!response.ok) throw new Error(`Layout load failed: ${response.status}`);
+      saved = await response.json();
+    } catch (error) {
+      console.error(error);
+      // layoutReady stays false on purpose — see its declaration above.
+      ctx.setEditorLoading('맵을 불러오지 못했습니다.', { onRetry: () => ctx.restoreLayout() });
       return;
     }
 
-    if (isLegacyFlatLayout(saved)) {
-      const items = collectRestoreItems(saved);
-      ctx.editorStatus.textContent = `저장된 객체 ${items.length}개를 복원하는 중...`;
-      for (const item of items) {
-        if (item.asset) await ctx.addAsset(item.asset, item, false);
-      }
+    if (!saved?.rooms?.length) {
+      ctx.ensureDefaultRoom();
+      ctx.syncHierarchy();
+      lastSyncedJson = JSON.stringify(ctx.serializeLayout());
+      ctx.layoutReady = true;
+      ctx.setEditorLoading(null);
+      return;
+    }
+
+    try {
+      ctx.buildRoomsFromLayout(saved);
+      const startRoom = ctx.rooms.find((room) => room.instanceId === ctx.currentRoomInstanceId);
+      ctx.setEditorLoading(`"${startRoom.name}" 방을 불러오는 중...`);
+      await ctx.loadRoomContents(startRoom);
       ctx.applyRoomVisibility();
       ctx.selectEditorObject(null);
       ctx.syncHierarchy();
-      ctx.editorStatus.textContent = `저장된 객체 ${ctx.placedObjects.length}개를 복원했습니다.`;
-      return;
+      ctx.editorStatus.textContent = `"${startRoom.name}" 방을 복원했습니다. (다른 방은 선택할 때 불러옵니다)`;
+      lastSyncedJson = JSON.stringify(ctx.serializeLayout());
+      ctx.layoutReady = true;
+      ctx.setEditorLoading(null);
+    } catch (error) {
+      console.error(error);
+      ctx.setEditorLoading('맵을 복원하는 중 오류가 발생했습니다. 페이지를 새로고침해 주세요.');
     }
-
-    collectRestoreItems(saved);
-    const startRoom = ctx.rooms.find((room) => room.instanceId === ctx.currentRoomInstanceId);
-    ctx.editorStatus.textContent = `"${startRoom.name}" 방을 불러오는 중...`;
-    await ctx.loadRoomContents(startRoom);
-    ctx.applyRoomVisibility();
-    ctx.selectEditorObject(null);
-    ctx.syncHierarchy();
-    ctx.editorStatus.textContent = `"${startRoom.name}" 방을 복원했습니다. (다른 방은 선택할 때 불러옵니다)`;
   };
 }

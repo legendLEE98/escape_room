@@ -12,18 +12,6 @@ export function initCameraView(ctx) {
   const editorCameraRight = new THREE.Vector3();
   const editorCameraOffset = new THREE.Vector3();
 
-  ctx.updateCameraProjection = () => {
-    const aspect = window.innerWidth / window.innerHeight;
-    const viewHeight = ctx.currentMode === 'editor' || ctx.currentMode === 'roomBuilder' ? 16 : 10;
-    ctx.camera.left = (-viewHeight * aspect) / 2;
-    ctx.camera.right = (viewHeight * aspect) / 2;
-    ctx.camera.top = viewHeight / 2;
-    ctx.camera.bottom = -viewHeight / 2;
-    ctx.camera.near = 0.01;
-    ctx.camera.far = 200;
-    ctx.camera.updateProjectionMatrix();
-  };
-
   ctx.applyEditorView = (view) => {
     ctx.editorView = view;
     if (view === 'top') {
@@ -38,7 +26,7 @@ export function initCameraView(ctx) {
   };
 
   ctx.updateEditorCameraMovement = (delta) => {
-    if (ctx.currentMode !== 'editor' && ctx.currentMode !== 'roomBuilder') return;
+    if (ctx.currentMode !== 'editor' && ctx.currentMode !== 'roomBuilder' && ctx.currentMode !== 'roomLink') return;
     const horizontal =
       Number(ctx.pressedKeys.has('KeyD')) - Number(ctx.pressedKeys.has('KeyA'));
     const vertical =

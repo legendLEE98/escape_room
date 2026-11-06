@@ -121,6 +121,7 @@ export default function CharacterBackdrop() {
       cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       renderer.dispose();
+      renderer.forceContextLoss();
       scene.traverse((child) => {
         if (child.isMesh) {
           child.geometry?.dispose();

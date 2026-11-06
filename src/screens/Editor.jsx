@@ -10,6 +10,18 @@ export default function Editor({ mapId, onBack }) {
     <>
       <canvas ref={canvasRef} id="scene" />
 
+      <div id="editor-loading" className="editor-loading">
+        <div className="editor-loading-spinner" />
+        <p id="editor-loading-text" className="editor-loading-text">
+          맵을 불러오는 중...
+        </p>
+        <button type="button" id="editor-loading-retry" className="editor-loading-retry" hidden>
+          다시 시도
+        </button>
+      </div>
+
+      <span id="save-status" className="save-status" hidden />
+
       <header className="mode-bar" aria-label="테스트 모드 선택">
         <button type="button" className="back-button" onClick={onBack}>
           ‹ 맵 목록
@@ -20,7 +32,10 @@ export default function Editor({ mapId, onBack }) {
             에디터 모드
           </button>
           <button className="mode-button" data-mode="roomBuilder">
-            방 수정
+            타일 수정
+          </button>
+          <button className="mode-button" data-mode="roomLink">
+            방 연결
           </button>
           <button className="mode-button" data-mode="movement">
             플레이 테스트
@@ -125,6 +140,13 @@ export default function Editor({ mapId, onBack }) {
                 className="hierarchy-toolbar-icon"
                 aria-label="방 추가"
                 title="새 방 추가"
+              />
+              <button
+                type="button"
+                id="add-exit"
+                className="hierarchy-toolbar-icon"
+                aria-label="탈출구 추가"
+                title="탈출구 추가 (벽에 클리어 문 만들기)"
               />
               <button
                 type="button"
@@ -409,30 +431,35 @@ export default function Editor({ mapId, onBack }) {
 
       <aside id="room-texture-panel" className="sidebar sidebar-left" hidden>
         <div className="sidebar-body">
-          <p className="eyebrow">텍스처</p>
+          <p className="eyebrow">타일</p>
           <p className="help">
-            준비 중입니다. 백엔드가 생기면 바닥/벽 텍스처를 여기서 업로드하고 방마다 지정할 수 있게 됩니다.
+            준비 중입니다. 백엔드가 생기면 바닥/벽 타일(텍스처)을 여기서 고르고 방마다 지정할 수 있게 됩니다.
           </p>
         </div>
       </aside>
 
-      <aside id="room-link-panel" className="sidebar sidebar-right" hidden>
+      <aside id="room-link-panel" className="sidebar sidebar-left" hidden>
+        <div className="sidebar-body">
+          <p className="eyebrow">방 연결</p>
+          <div id="room-link-list" className="room-link-list" />
+
+          <label htmlFor="room-link-target-select">연결할 방</label>
+          <select id="room-link-target-select" />
+          <button type="button" id="room-link-add-button" className="primary-button">
+            + 연결 추가
+          </button>
+          <button type="button" id="room-exit-add-button" className="primary-button">
+            + 탈출구 추가
+          </button>
+          <p id="room-link-status" className="help" />
+        </div>
+      </aside>
+
+      <aside id="room-list-panel" className="sidebar sidebar-right" hidden>
         <div className="sidebar-body sidebar-right-body room-builder-sidebar-body">
           <div className="room-builder-room-list-section">
             <p className="eyebrow">방 목록</p>
             <ul id="room-builder-room-list" className="room-builder-room-list" aria-label="편집할 방 선택" />
-          </div>
-
-          <div className="room-link-section">
-            <p className="eyebrow">방 연결</p>
-            <div id="room-link-list" className="room-link-list" />
-
-            <label htmlFor="room-link-target-select">연결할 방</label>
-            <select id="room-link-target-select" />
-            <button type="button" id="room-link-add-button" className="primary-button">
-              + 연결 추가
-            </button>
-            <p id="room-link-status" className="help" />
           </div>
         </div>
       </aside>

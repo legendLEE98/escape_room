@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { cloneMaterials } from '../assets/catalog.js';
+import { cloneMaterials } from '../../engine/asset-loader.js';
 
 export const THUMBNAIL_SIZE = 96;
 
@@ -88,6 +88,12 @@ export function initAssetPreview(ctx) {
     },
     { root: ctx.assetSelect, threshold: 0.1 },
   );
+
+  ctx.addDisposer(() => {
+    ctx.thumbnailObserver.disconnect();
+    thumbnailRenderer.dispose();
+    thumbnailRenderer.forceContextLoss();
+  });
 
   ctx.selectAssetCard = (file) => {
     ctx.selectedAssetFile = file;

@@ -1,61 +1,7 @@
-import * as THREE from 'three';
-
-export function initRooms(ctx) {
-  ctx.rooms = [];
-  ctx.nextRoomInstanceId = 1;
-  ctx.currentRoomInstanceId = null;
-
-  function createRoom(name, isStartRoom) {
-    const room = {
-      instanceId: ctx.nextRoomInstanceId++,
-      name,
-      isStartRoom,
-      _loaded: true,
-      // Where this room sits relative to every other room, in the same
-      // shared grid used by floorCells — set by dragging its ghost into
-      // place during room-link creation. Unrelated to the isolated-editing
-      // trick (room.root itself always renders at local origin while you're
-      // editing that specific room); this is purely link/ghost-placement data.
-      worldOffset: { x: 0, z: 0 },
-    };
-    room.root = new THREE.Group();
-    room.root.name = name;
-    room.root.userData.isRoomRoot = true;
-    room.root.userData.roomInstanceId = room.instanceId;
-    room.root.visible = false;
-    ctx.editorRoot.add(room.root);
-    return room;
-  }
-
-  ctx.createRoom = createRoom;
-
-  ctx.getObjectRoomInstanceId = (object) => {
-    let current = object;
-    while (current) {
-      if (current.userData.isRoomRoot) return current.userData.roomInstanceId;
-      current = current.parent;
-    }
-    return null;
-  };
-
-  ctx.applyRoomVisibility = () => {
-    ctx.rooms.forEach((room) => {
-      room.root.visible = room.instanceId === ctx.currentRoomInstanceId;
-    });
-    // Single choke point for "which room is current changed" — every place
-    // that flips ctx.currentRoomInstanceId calls this already, so hooking
-    // the ghost refresh in here means none of them can forget to do it
-    // themselves (deleteRoom was one that did, leaving the old room's linked
-    // ghosts on screen after the room it belonged to was gone).
+// Editor-only room operations; the room model itself lives in engine/rooms.js.
+export function initEditorRooms(ctx) {
+  ctx.onRoomVisibilityApplied = () => {
     if (ctx.currentMode === 'editor') ctx.refreshRoomLinkGhostsForCurrentRoom?.();
-  };
-
-  ctx.ensureDefaultRoom = () => {
-    if (ctx.rooms.length > 0) return;
-    const room = createRoom('방1', true);
-    ctx.rooms.push(room);
-    ctx.currentRoomInstanceId = room.instanceId;
-    ctx.applyRoomVisibility();
   };
 
   ctx.deleteRoom = (room) => {

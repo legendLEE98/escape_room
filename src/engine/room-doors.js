@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { cloneMaterials } from '../assets/catalog.js';
+import { cloneMaterials } from './asset-loader.js';
 
 // Not part of the placeable asset catalog (no manifest entry yet), so it's
 // hardcoded here rather than looked up — this is structural geometry, not
@@ -166,6 +166,8 @@ export function initRoomDoors(ctx) {
         // local origin sits right at its hinge edge (see room-doors.js's
         // earlier GLB inspection notes), so rotating it in place opens it.
         edge._doorLeaf = content.getObjectByName('Door');
+        // Whole door+frame, so the editor can pick it with a click.
+        edge._doorContent = content;
       });
     });
   };

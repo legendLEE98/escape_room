@@ -10,11 +10,13 @@ export function initRightTabs(ctx) {
     });
   }
 
+  ctx.setRightTab = (tab) => {
+    ctx.activeRightTab = tab;
+    apply();
+  };
+
   ctx.rightTabButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      ctx.activeRightTab = button.dataset.tab;
-      apply();
-    });
+    button.addEventListener('click', () => ctx.setRightTab(button.dataset.tab));
   });
 
   apply();

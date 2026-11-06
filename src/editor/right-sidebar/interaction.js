@@ -38,7 +38,9 @@ export function initInteraction(ctx) {
 
   function renderDoorState({ edge, canonicalRoom, canonicalEdge }) {
     const targetRoom = ctx.rooms.find((candidate) => candidate.instanceId === edge.connectedRoomInstanceId);
-    ctx.interactionDoorLabel.textContent = `문 · → ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
+    ctx.interactionDoorLabel.textContent = edge.isExit
+      ? '탈출구'
+      : `문 · → ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
 
     // Lock state reads/writes always go through the canonical edge — a door
     // is unlocked or locked as a whole, not per direction. See
@@ -154,7 +156,7 @@ export function initInteraction(ctx) {
 
       const label = document.createElement('span');
       label.className = 'interaction-list-row-label';
-      label.textContent = `→ ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
+      label.textContent = edge.isExit ? '탈출구' : `→ ${targetRoom ? targetRoom.name : '(삭제된 방)'}`;
 
       row.append(badge, label);
       row.addEventListener('click', () => ctx.selectDoorForInteraction(currentRoom, edge));

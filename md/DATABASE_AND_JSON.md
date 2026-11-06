@@ -2,30 +2,53 @@
 
 ## 이 문서를 볼 때
 
-맵 저장 기능, 에디터, API, 데이터베이스 테이블을 작업할 때 본다. 게임 안에서 이 데이터가 어떻게 쓰이는지는 [게임 플레이](./GAMEPLAY.md), 전체 서버 구성은 [아키텍처](./ARCHITECTURE.md)를 참고한다.
+계정, 맵 저장·배포, 데이터베이스 테이블, 맵 JSON 구조를 작업할 때 본다. 게임 안에서 이 데이터가 어떻게 쓰이는지는 [게임 플레이](./GAMEPLAY.md), 전체 서버 구성은 [아키텍처](./ARCHITECTURE.md)를 참고한다.
 
-## 저장소 두 곳 — Postgres와 Redis
+## 저장소 — Postgres, Redis, 브라우저
 
-**맵을 만드는 사람이 저장하는 원본 데이터**(방/오브젝트/문 배치, 잠금 설정, 상호작용 내용)는 Postgres에 영구 저장한다. **플레이어가 게임방에서 진행하며 바뀌는 값**(눌린 버튼, 열린 문, 획득한 아이템, 남은 시간, 각 플레이어 현재 위치 등)은 세션 하나 한정으로 휘발성이고 쓰기 빈도가 높아서(움직일 때마다, 버튼 누를 때마다) Postgres가 아니라 Redis에 둔다. 이 구분은 [게임 플레이](./GAMEPLAY.md)의 "게임방 상태"에서 개념적으로 이미 정리했던 것을, 실제 저장소 단위로 구체화한 것이다. Postgres 테이블은 아래 "현재 테이블", Redis 키 구조는 그 아래 "Redis — 게임방 진행 상태" 절을 참고한다.
+**맵을 만드는 사람이 저장하는 원본 데이터**(방/오브젝트/문 배치, 잠금 설정, 상호작용 내용)는 Postgres에 영구 저장한다. **플레이어가 게임방에서 진행하며 바뀌는 값**(눌린 버튼, 열린 문, 획득한 아이템, 남은 시간, 각 플레이어 현재 위치 등)은 세션 하나 한정으로 휘발성이고 쓰기 빈도가 높아서(움직일 때마다, 버튼 누를 때마다) Postgres가 아니라 Redis에 둔다. 이 구분은 [게임 플레이](./GAMEPLAY.md)의 "게임방 상태"에서 개념적으로 이미 정리했던 것을, 실제 저장소 단위로 구체화한 것이다. Postgres 테이블은 아래 "현재 테이블", Redis 키 구조는 그 아래 "Redis" 절을 참고한다.
+
+세 번째 저장소는 **사용자 브라우저(localStorage)** 다. 지금은 **최근 플레이한 맵**(`escape-room-recent-map-codes-v1`) 하나만 여기 둔다 — 공유 코드만 최대 12개 저장하고, 제목 등은 열 때마다 서버에서 다시 조회한다(공유가 중단되거나 삭제된 맵은 "사용할 수 없는 맵"으로 표시). 게임방은 서버(Redis)에 있다.
 
 ## 현재 테이블 (Postgres)
 
 스키마 원본은 [db/schema.sql](../db/schema.sql)에 있고, 그 파일을 그대로 실행하면 아래 구조가 만들어진다(재실행하면 기존 테이블을 지우고 다시 만드므로, 보존할 데이터가 없는 개발 DB에서만 쓴다).
 
+### users
+
+맵을 만드는 계정이다. **게임만 하는 비로그인 사용자(게스트)는 이 테이블에 행을 만들지 않고**, 서명된 임시 토큰만 받는다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| id | uuid, PK | 사용자 ID |
+| provider | varchar(20), `local`\|`google`\|`naver` | 가입 방식. 지금 구현된 건 `local`뿐이고 소셜은 같은 구조로 붙일 예정 |
+| provider_user_id | varchar(255) | 로컬은 이메일과 같은 값, 소셜은 제공자가 주는 고유 id |
+| email | varchar(255), NOT NULL | **로그인 id.** 소문자로 정규화해서 저장 |
+| password_hash | varchar(255), NULL 허용 | argon2id 해시. 로컬 가입자만 값이 있음 |
+| nickname | varchar(30), UNIQUE | `닉네임#랜덤4글자` 전체 문자열(예: `홍길동#k3x9`). 입력 부분은 최대 24자, `#` 불가 |
+| role | varchar(20), 기본 `'user'`, `user`\|`admin` | 권한 |
+| created_at / last_login_at | timestamptz | 가입·마지막 로그인 시각 |
+
+- 제약: `UNIQUE (provider, provider_user_id)`, `UNIQUE (provider, email)`, `CHECK ((provider = 'local') = (password_hash IS NOT NULL))`.
+- 이메일 유일성을 이메일 단독이 아니라 가입 방식별로 건 이유: 로컬 가입은 아직 이메일 인증이 없어서, 이메일 단독 UNIQUE면 남의 이메일로 먼저 가입해 두는 것만으로 그 사람의 구글 가입을 막을 수 있다. 같은 사람이 로컬과 구글로 각각 가입하면 계정이 둘로 나뉘는데, 계정 연결 기능은 만들지 않기로 한 결정과 맞다.
+
 ### map_info
 
-맵 목록에서 보여 줄 기본 정보다.
+맵 하나의 기본 정보와 **현재 공유 상태**다. 맵은 만든 계정(`owner_id`)의 것이고, 모든 맵 API는 소유자 본인에게만 열린다.
 
 | 컬럼 | 타입 | 설명 |
 | --- | --- | --- |
 | id | uuid, PK | 맵 ID |
+| owner_id | uuid, FK → users (CASCADE), NOT NULL | 만든 계정. 계정이 삭제되면 맵도 함께 삭제 |
 | title | varchar(100) | 맵 이름 |
 | filter | varchar(50), 기본 `'DEFAULT'` | 맵 분류 |
 | difficulty | smallint, 기본 1, 1~5 | 난이도 |
-| map_desc | text | 맵 설명 |
+| map_desc | text | 맵 설명(방 정보의 "컨셉"으로 표시) |
 | min_user | smallint, 기본 1, ≥1 | 최소 인원 |
 | max_user | smallint, 기본 4, ≥min_user | 최대 인원 |
-| deploy | boolean, 기본 false | 배포 여부 |
+| deploy | boolean, 기본 false | **지금 코드로 공유 중인가** |
+| share_code | varchar(8), UNIQUE, NULL 허용 | 공유 코드. 첫 배포 때 만들어지고 이후 바뀌지 않는다(공유를 중단해도 유지) |
+| release_version | integer, 기본 0 | 가장 최근 배포 버전(`map_release.version`의 최댓값) |
 | created_at / updated_at | timestamptz, 기본 현재시각 | 만든·수정한 시각 |
 
 ### map_room
@@ -89,6 +112,19 @@
 | connected_room_id | uuid, FK → map_room | 이 문을 통과하면 이동하는 방 ID |
 | created_at | timestamptz | 만든 시각 |
 
+### map_exit_edge
+탈출구(맵 밖으로 나가는 문) 한 개의 위치. 도달하면 게임이 클리어된다. 잠금은 일반 문과 똑같이 `map_door` 행(`id` = `exitId`)에 있고, 이 테이블은 **어느 방의 어느 벽 칸·변인지**만 가진다. 연결된 방이 없고 면이 하나뿐이라서 `map_door_edge`(문 하나 = 두 방에 두 행)에 억지로 넣지 않고 따로 뒀다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| id | uuid, PK | |
+| door_id | uuid, FK → `map_door`, 삭제 시 CASCADE, UNIQUE | 이 탈출구의 잠금 행 |
+| room_id | uuid, FK → `map_room`, 삭제 시 CASCADE | 탈출구가 있는 방 |
+| x, z | smallint | 벽이 있는 바닥 칸 |
+| side | varchar(1) (`N`\|`S`\|`W`\|`E`) | 그 칸의 어느 변 |
+
+JSON에서는 방마다 `doorEdges`와 별도로 `exitEdges` 배열을 둔다(없으면 빈 배열로 취급): `{ x, z, side, exitId, lockType, password, requiredButtonId }`. 런타임에서는 편의상 `room.doorEdges`에 `isExit: true`로 같이 들어 있어서 벽 구멍, 문 모델, 잠금 판정을 그대로 쓰고, 저장할 때만 나뉜다.
+
 **왜 잠금 정보를 `map_door_edge`가 아니라 `map_door`에 따로 뒀는가**: 예전 설계(에디터의 `doorEdges` JSON 필드 그대로)처럼 두 행 각각에 `lockType`/`password`를 넣고 "둘 중 `room_id`가 더 작은 쪽만 진짜 값" 같은 애플리케이션 레벨 규칙으로 관리하면, 그 규칙을 코드가 어디선가 안 지키는 순간 "한쪽에서는 잠겨있고 반대쪽에서는 안 잠긴" 모순 데이터가 생길 수 있다(실제로 에디터 개발 중 이 문제로 버그가 한 번 났었다 — `ctx.resolveCanonicalDoorEdge`로 고쳤다). `map_door`를 따로 둬서 잠금 정보가 물리적으로 한 곳에만 존재하게 만들면 그 모순 자체가 스키마 레벨에서 불가능해진다.
 
 ### map_interaction
@@ -107,7 +143,45 @@
 
 `button`은 별도 필드가 없다 — 타입 자체가 마킹 역할이고, `map_door.required_button_object_id`가 이 오브젝트를 가리키는 것으로 문과 연결된다. 눌렸는지 여부는 맵 원본이 아니라 게임방 진행 상태(Redis)로 추적된다. `required_item_id`/`reward_item_id`/`click_regions` 같은 아이템·인벤토리 연동 필드는 인벤토리 시스템이 실제로 만들어지기 전까지는 없다(설계만 확정 — 개인별이 아니라 팀 공유 인벤토리로 갈 예정).
 
-## Redis — 게임방 진행 상태
+### map_release
+
+배포할 때마다 한 줄씩 쌓이는 **변경 불가능한 스냅샷**이다. 플레이어는 항상 이 배포본을 읽고, 제작자의 작업본(위의 `map_room` 등)은 읽지 않는다. 작업본을 계속 고쳐도 배포된 맵은 다시 배포하기 전까지 바뀌지 않는다. 자세한 흐름은 [맵 배포](./MAP_DEPLOY.md)를 참고한다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| id | uuid, PK | 배포본 ID (게임방이 어떤 버전으로 시작했는지 가리킬 때 사용) |
+| map_id | uuid, FK → map_info (CASCADE) | 원본 맵 |
+| version | integer | 맵별 1, 2, 3... `UNIQUE (map_id, version)` |
+| title, difficulty, min_user, max_user, map_desc | | 배포 시점의 맵 정보 스냅샷 |
+| layout | jsonb | 배포 시점의 레이아웃 전체. 아래 "맵 에디터용 JSON 구조"와 같은 모양이며, 항상 통째로만 읽으므로 정규화하지 않고 JSON으로 둔다 |
+| published_at | timestamptz | 배포 시각 |
+
+### user_saved_maps
+
+로그인 사용자의 "코드로 추가한 맵" 목록이다(PK `(user_id, map_id)`, `last_played_at`). API(`/api/me/saved-maps`)는 만들어 두었지만 **현재 화면은 사용하지 않는다** — 최근 플레이 맵을 브라우저 localStorage로 관리하기로 했기 때문이다. 계정 간에 목록을 이어 보고 싶어질 때를 위해 남겨 둔 상태다.
+
+## Redis
+
+### 지금 쓰는 것: 요청 횟수 제한
+
+`ratelimit:{종류}:{...}` 키에 고정 시간창 카운터를 둔다(`incr` + `expire`). 로그인 실패(IP+이메일 조합 15분 5회, IP 단위 30회), 회원가입(IP당 시간당 10회), 공유 코드 조회(IP당 분당 60회)에 쓴다. 성공한 로그인은 해당 카운터를 지운다.
+
+### 게임방 (구현됨)
+
+방의 목록·참가자·방장은 Redis에 두고, 사람이 나가면 바로 반영되도록 소켓 연결과 함께 움직인다. 대기실에서의 위치는 저장하지 않고 소켓으로 중계만 한다(서버 메모리에 방별 마지막 위치만 보관).
+
+| 키 | 타입 | 내용 |
+| --- | --- | --- |
+| `gamerooms` | sorted set | 방 id 목록(점수 = 생성 시각). 목록 조회용 인덱스 |
+| `gameroom:{roomId}` | hash | `id`, `title`, `map`(맵 요약 JSON 스냅샷, 고정된 `releaseId` 포함), `maxUser`, `status`(`waiting`\|`playing`\|`cleared`), `hostId`, `hostNickname`, `createdAt`, `startedAt`·`clearedAt`(시작·클리어 시각, epoch ms) |
+| `gameroom:{roomId}:pressed` / `:unlocked` | set | 플레이 중 누른 버튼 id / 푼 문 id (각각 레이아웃의 오브젝트 `savedId`, `doorId`). 방 키와 같은 TTL을 따르고 방이 닫히면 같이 지운다 |
+| `gameroom:{roomId}:players` | hash | 참가자 id → `{id, nickname, kind, joinedAt}` JSON. `joinedAt` 순서가 방장 승계 순서 |
+
+- 입장은 Lua 스크립트 하나로 처리해서 "가득 참 / 이미 시작됨" 검사와 추가가 한꺼번에 일어난다(동시에 두 명이 마지막 자리에 들어오려 해도 한 명만 들어간다). 이미 방에 있던 사람의 재접속은 가득 찼거나 시작된 방에서도 허용한다.
+- 만료(TTL): 만들고 아무도 입장하지 않으면 120초, 모두 나가면 30초 뒤 방 키가 사라진다. 서버를 재시작하면 `gameroom:*`를 전부 지운다(연결이 모두 끊겼으므로).
+- 맵 정보는 방을 만들 때 복사해 둔 스냅샷이라, 이후에 맵이 공유 중단돼도 방 카드가 그대로 읽힌다.
+
+### 게임 진행 상태 (설계만, 아직 미구현)
 
 맵 원본과 달리 **게임방(세션) 하나에 한정된 휘발성 데이터**다. 문/버튼/아이템은 팀 전체가 공유하는 상태(개인별 인벤토리가 아니라는 설계 결정과 동일한 원칙)라 세션당 하나씩만 있으면 되고, 각 플레이어가 독립적으로 다른 방에 있을 수 있는 위치 정보만 플레이어별로 따로 둔다. 키는 `session:{sessionId}:...` 형태로 세션 단위 네임스페이스를 준다.
 
@@ -126,7 +200,7 @@
 
 ## 맵 에디터용 JSON 구조
 
-맵 저장 API와 게임방이 생기기 전까지는, 방을 만들고 3D에서 바로 테스트해 볼 수 있도록 아래 형태의 JSON 파일 하나로 맵을 정의한다. DB 저장은 이 구조를 `map_room` / `map_door_edge` / `map_object` / `map_interaction` 테이블로 그대로 풀어서 넣는 방식으로 처리한다.
+이 JSON은 에디터가 서버와 주고받는 맵 레이아웃의 모양이다. 서버는 `PUT /api/maps/:id/layout`으로 받은 JSON을 `map_room` / `map_door` / `map_door_edge` / `map_exit_edge` / `map_object` / `map_interaction` 테이블로 풀어서 저장하고, `GET /api/maps/:id/layout`에서 다시 같은 모양으로 조립해 돌려준다. 저장은 변경분만 반영하지 않고 **그 맵의 방/오브젝트/문을 통째로 지우고 다시 넣는 방식**(한 트랜잭션)이라 DB 행의 id는 저장할 때마다 새로 바뀐다. 에디터가 보내는 `room-N`/`obj-N` 같은 임시 id는 요청 안에서만 의미가 있고, 서버가 실제 uuid로 바꿔 넣으며 부모 오브젝트·문 잠금 버튼·방 연결 같은 교차 참조도 함께 다시 연결한다. 응답으로 나가는 id는 DB의 실제 uuid다(에디터는 id를 불투명한 문자열로 취급하므로 형식이 달라도 상관없다). 배포할 때는 이 레이아웃 전체가 `map_release.layout`에 그대로 복사된다.
 
 이 구조는 에디터의 `ctx.serializeLayout()`(`src/editor/persistence.js`)이 실제로 만들어내는 형태를 그대로 옮긴 것이다.
 
@@ -263,7 +337,7 @@
 
 ## 저장 원칙
 
-- 맵 정보, 방, 오브젝트, 상호작용은 맵을 만드는 사람이 저장하는 원본 데이터다.
-- 플레이어가 퍼즐을 풀며 바꾸는 값은 맵 원본에 저장하지 않는다.
-- 아이템 획득, 열린 문, 푼 퍼즐은 나중에 게임방별 데이터로 따로 저장한다.
-- 맵을 수정해서 새로 배포하면 새 UUID의 맵으로 저장한다.
+- 맵 정보, 방, 오브젝트, 상호작용은 맵을 만든 계정이 저장하는 원본 데이터다. 에디터는 첫 변경 후 10초 안에 자동 저장하고 Ctrl+S로 즉시 저장한다. 저장이 곧 배포는 아니다.
+- 배포하면 현재 저장된 작업본이 새 버전(`map_release`)으로 복사된다. 재배포해도 맵 ID와 공유 코드는 그대로이고 버전 번호만 올라간다.
+- 플레이어가 퍼즐을 풀며 바꾸는 값은 맵 원본에도 배포본에도 저장하지 않는다. 눌린 버튼, 열린 문, 획득한 아이템은 게임방(세션) 단위로 Redis에 둔다.
+- 문 비밀번호는 배포본의 레이아웃에 평문으로 들어 있다. 한 번 풀면 끝나는 협동 게임이라 클라이언트에서 검사하기로 했고, 문이 열렸다는 처리를 한 함수(`submitPasswordModal`)로 모아 두어서 기록 경쟁 같은 기능이 생기면 서버 검증으로 바꿀 수 있다.

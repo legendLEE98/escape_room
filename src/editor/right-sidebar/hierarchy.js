@@ -1,4 +1,5 @@
 import ADD_ROOM_ICON from 'lucide-static/icons/towel-rack.svg?raw';
+import ADD_EXIT_ICON from 'lucide-static/icons/door-open.svg?raw';
 import ADD_EMPTY_OBJECT_ICON from 'lucide-static/icons/scan-box.svg?raw';
 
 const EYE_ICON =
@@ -63,7 +64,7 @@ export function initHierarchy(ctx) {
 
   ctx.findPlacedAncestor = (object) => {
     let current = object;
-    while (current && current !== ctx.editorRoot) {
+    while (current && current !== ctx.worldRoot) {
       if (current.userData.editorAsset) return current;
       current = current.parent;
     }
@@ -134,6 +135,17 @@ export function initHierarchy(ctx) {
     ctx.saveLayout();
   }
 
+  // The nearest door of `room` under the pointer ({ edge, distance }), or null.
+  function pickDoorEdge(room) {
+    let nearest = null;
+    (room?.doorEdges || []).forEach((edge) => {
+      if (!edge._doorContent) return;
+      const [hit] = ctx.raycaster.intersectObject(edge._doorContent, true);
+      if (hit && (!nearest || hit.distance < nearest.distance)) nearest = { edge, distance: hit.distance };
+    });
+    return nearest;
+  }
+
   ctx.selectFromCanvas = (event) => {
     if (ctx.suppressNextCanvasClick) {
       ctx.suppressNextCanvasClick = false;
@@ -152,6 +164,18 @@ export function initHierarchy(ctx) {
       (object) => ctx.getObjectRoomInstanceId(object) === ctx.currentRoomInstanceId,
     );
     const hits = ctx.raycaster.intersectObjects(candidates, true);
+
+    // Doors aren't placed objects; a door that is hit before any object is
+    // selected the same way a door row in the interaction tab is.
+    const room = ctx.rooms.find((candidate) => candidate.instanceId === ctx.currentRoomInstanceId);
+    const doorHit = pickDoorEdge(room);
+    if (doorHit && (!hits.length || doorHit.distance < hits[0].distance)) {
+      ctx.selectEditorObject(null);
+      ctx.selectDoorForInteraction(room, doorHit.edge);
+      ctx.setRightTab('interaction');
+      return;
+    }
+
     const object = hits.length ? ctx.findPlacedAncestor(hits[0].object) : null;
     if (object && event.shiftKey) ctx.selectEditorObject(object, { range: true });
     else if (object && (event.ctrlKey || event.metaKey)) ctx.selectEditorObject(object, { additive: true });
@@ -301,6 +325,8 @@ export function initHierarchy(ctx) {
 
   ctx.addRoomButton.innerHTML = ADD_ROOM_ICON;
   ctx.addRoomButton.addEventListener('click', ctx.startRoomBuilder);
+  ctx.addExitButton.innerHTML = ADD_EXIT_ICON;
+  ctx.addExitButton.addEventListener('click', () => ctx.startExitPicking({ returnToEditor: true }));
   ctx.addEmptyObjectButton.innerHTML = ADD_EMPTY_OBJECT_ICON;
   ctx.addEmptyObjectButton.addEventListener('click', () => ctx.addEmptyObject());
 
@@ -470,16 +496,17 @@ export function initHierarchy(ctx) {
     menu.append(
       buildContextMenuItem('빈 오브젝트 추가', () => ctx.addEmptyObject()),
       buildContextMenuItem('방 추가', ctx.startRoomBuilder),
+      buildContextMenuItem('탈출구 추가', () => ctx.startExitPicking({ returnToEditor: true })),
       buildContextMenuItem('스폰 위치 추가', () => ctx.addSpawnPoint()),
     );
     document.body.append(menu);
     openContextMenu = menu;
   });
 
-  document.addEventListener('click', closeContextMenu);
-  document.addEventListener('keydown', (event) => {
+  ctx.listen(document, 'click', closeContextMenu);
+  ctx.listen(document, 'keydown', (event) => {
     if (event.code === 'Escape') closeContextMenu();
   });
 
-  ctx.canvas.addEventListener('click', ctx.selectFromCanvas);
+  ctx.listen(ctx.canvas, 'click', ctx.selectFromCanvas);
 }
