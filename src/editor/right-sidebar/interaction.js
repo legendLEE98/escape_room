@@ -1,3 +1,5 @@
+import { uploadImage } from '../../data/uploads.js';
+
 const INTERACTION_LABELS = {
   memo: '메모',
   choice: '선택지',
@@ -292,17 +294,26 @@ export function initInteraction(ctx) {
     ctx.saveLayout();
   });
 
-  ctx.inspectorBgImage.addEventListener('change', () => {
-    if (!ctx.selectedEditorObject) return;
+  // The picked image is uploaded to the server and the object keeps the
+  // returned URL — a blob: URL would die with the tab and never reach players.
+  ctx.inspectorBgImage.addEventListener('change', async () => {
+    const target = ctx.selectedEditorObject;
     const file = ctx.inspectorBgImage.files[0];
-    if (!file) return;
+    ctx.inspectorBgImage.value = '';
+    if (!target || !file) return;
 
-    const previousUrl = ctx.selectedEditorObject.userData.bgImageUrl;
-    if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
-
-    const objectUrl = URL.createObjectURL(file);
-    ctx.selectedEditorObject.userData.bgImageUrl = objectUrl;
-    ctx.inspectorBgPreview.hidden = false;
-    ctx.inspectorBgPreview.src = objectUrl;
+    ctx.showCenterToast?.('이미지 올리는 중...');
+    try {
+      const url = await uploadImage(file);
+      target.userData.bgImageUrl = url;
+      if (ctx.selectedEditorObject === target) {
+        ctx.inspectorBgPreview.hidden = false;
+        ctx.inspectorBgPreview.src = url;
+      }
+      ctx.saveLayout();
+      ctx.showCenterToast?.('이미지를 등록했습니다.');
+    } catch (error) {
+      ctx.showCenterToast?.(error.message);
+    }
   });
 }

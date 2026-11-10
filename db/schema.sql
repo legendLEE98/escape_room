@@ -70,6 +70,9 @@ CREATE TABLE map_info (
   -- deploy and kept for life (unpublishing keeps it so a redeploy restores
   -- the same link). release_version is the latest map_release.version.
   deploy      boolean NOT NULL DEFAULT false,
+  -- featured = official map listed for everyone in "create room" (set by hand:
+  -- UPDATE map_info SET featured = true WHERE id = '...'). Only shown while deploy = true.
+  featured    boolean NOT NULL DEFAULT false,
   share_code  varchar(8) UNIQUE,
   release_version integer NOT NULL DEFAULT 0,
   created_at  timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,

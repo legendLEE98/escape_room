@@ -9,6 +9,12 @@ async function bootstrap() {
   // real client (the login throttle is keyed on it).
   app.set('trust proxy', 1);
   app.use(cookieParser());
+  // Image uploads arrive as the raw request body (see uploads.controller.ts).
+  // 1MB also stays under nginx's default request size limit.
+  app.useBodyParser('raw', {
+    type: ['image/png', 'image/jpeg', 'image/webp'],
+    limit: '1mb',
+  });
   // nginx forwards the /api/ prefix through unchanged (proxy_pass has no
   // trailing path), so routes are defined without it and this adds it back.
   app.setGlobalPrefix('api');

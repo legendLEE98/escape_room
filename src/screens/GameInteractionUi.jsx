@@ -17,6 +17,7 @@ export function useInteractionUi() {
         toastTimer.current = setTimeout(() => setToast(""), ms);
       },
       showMemo: ({ title, text }) => setView({ type: "memo", title, text }),
+      showImage: ({ title, url }) => setView({ type: "image", title, url }),
       showChoice: ({ title, options }) =>
         setView({ type: "choice", title, options, result: null }),
       showPicker: ({ candidates, onPick }) =>
@@ -50,6 +51,20 @@ function InteractionOverlay({ view, setView, close, toast }) {
               <p className="game-interaction-text">
                 {view.text || "(내용이 없습니다.)"}
               </p>
+            </>
+          )}
+          {view.type === "image" && (
+            <>
+              <h3>{view.title}</h3>
+              {view.url ? (
+                <img
+                  className="game-interaction-image"
+                  src={view.url}
+                  alt={view.title}
+                />
+              ) : (
+                <p className="game-interaction-text">(등록된 이미지가 없습니다.)</p>
+              )}
             </>
           )}
           {view.type === "choice" && (

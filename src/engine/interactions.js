@@ -65,6 +65,11 @@ export function initInteractions(ctx) {
       ui.showChoice({ title: object.name, options: object.userData.choiceOptions || [] });
       return;
     }
+    if (type === 'image') {
+      activeTargets = [object];
+      ui.showImage({ title: object.name, url: object.userData.bgImageUrl || '' });
+      return;
+    }
     if (type === 'button') {
       ctx.playState.pressButton(ctx.playState.buttonKey(object));
       ui.toast(`"${object.name}" 버튼을 눌렀습니다.`, 1400);

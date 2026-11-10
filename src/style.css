@@ -2752,3 +2752,102 @@ kbd {
 .game-ending-card .primary-button {
   margin-top: 14px;
 }
+
+.image-modal {
+  position: relative;
+  padding: 16px;
+  border-radius: 6px;
+  background: #10192a;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 55%);
+}
+
+.image-modal-img {
+  display: block;
+  max-width: min(80vw, 900px);
+  max-height: 75vh;
+  border-radius: 3px;
+}
+
+.image-modal-img[hidden] {
+  display: none;
+}
+
+.game-interaction-image {
+  display: block;
+  max-width: 100%;
+  max-height: 50vh;
+  margin: 0 auto 12px;
+  border-radius: 6px;
+}
+
+.map-section-title {
+  margin: 22px 0 10px;
+  color: #cfe0f5;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.map-section-title:first-of-type {
+  margin-top: 6px;
+}
+
+/* Divider above every section title except the first. */
+.map-section-title {
+  padding-top: 18px;
+  border-top: 1px solid rgb(255 255 255 / 14%);
+}
+
+.map-section-title:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.game-keyguide {
+  position: absolute;
+  z-index: 20;
+  top: 72px;
+  right: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 12px;
+  color: #fff;
+  background: rgb(10 16 28 / 78%);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.game-keyguide h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #cfe0f5;
+}
+
+.game-keyguide dl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 14px;
+  margin: 0;
+  align-items: center;
+}
+
+.game-keyguide dt {
+  display: flex;
+  gap: 3px;
+}
+
+.game-keyguide dd {
+  margin: 0;
+  color: #c4d2e6;
+}
+
+.game-keyguide kbd {
+  min-width: 22px;
+  padding: 2px 6px;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 8%);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+}

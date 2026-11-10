@@ -378,6 +378,18 @@ export default function Editor({ mapId, onBack }) {
         </div>
       </div>
 
+      <div id="image-modal" className="memo-modal-overlay" hidden>
+        <div className="image-modal">
+          <button type="button" id="image-modal-close" className="memo-modal-close" aria-label="닫기">
+            ×
+          </button>
+          <img id="image-modal-img" className="image-modal-img" alt="" />
+          <p id="image-modal-empty" className="memo-modal-text" hidden>
+            (등록된 이미지가 없습니다.)
+          </p>
+        </div>
+      </div>
+
       <div id="choice-modal" className="choice-modal-overlay" hidden>
         <div className="choice-modal">
           <button type="button" id="choice-modal-close" className="choice-modal-close" aria-label="닫기">

@@ -53,6 +53,8 @@ export function initEditorPlayUi(ctx) {
     ctx.interactionPicker.hidden = true;
     ctx.interactionPickerList.innerHTML = '';
     ctx.memoModal.hidden = true;
+    ctx.imageModal.hidden = true;
+    ctx.imageModalImg.removeAttribute('src');
     ctx.choiceModal.hidden = true;
     ctx.choiceModalOptions.hidden = false;
     ctx.choiceModalOptions.innerHTML = '';
@@ -77,6 +79,13 @@ export function initEditorPlayUi(ctx) {
     showMemo({ text }) {
       ctx.memoModalText.textContent = text;
       ctx.memoModal.hidden = false;
+    },
+
+    showImage({ url }) {
+      ctx.imageModalImg.hidden = !url;
+      ctx.imageModalEmpty.hidden = Boolean(url);
+      if (url) ctx.imageModalImg.src = url;
+      ctx.imageModal.hidden = false;
     },
 
     showChoice({ options }) {
@@ -127,6 +136,7 @@ export function initEditorPlayUi(ctx) {
   }
 
   ctx.memoModalClose.addEventListener('click', ctx.cancelInteractionPicker);
+  ctx.imageModalClose.addEventListener('click', ctx.cancelInteractionPicker);
   ctx.choiceModalClose.addEventListener('click', ctx.cancelInteractionPicker);
   ctx.passwordModalClose.addEventListener('click', ctx.cancelInteractionPicker);
   ctx.passwordModalConfirm.addEventListener('click', submitPasswordModal);

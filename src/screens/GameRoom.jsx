@@ -287,6 +287,24 @@ export default function GameRoom({ room, user, onLeave }) {
           </ul>
         )}
 
+        {started && (
+          <aside className="game-keyguide" aria-label="조작 방법">
+            <h3>조작 방법</h3>
+            <dl>
+              <dt><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></dt>
+              <dd>이동</dd>
+              <dt><kbd>마우스 클릭</kbd></dt>
+              <dd>클릭한 곳으로 이동</dd>
+              <dt><kbd>G</kbd></dt>
+              <dd>가까운 물건·문 조사</dd>
+              <dt><kbd>휠</kbd></dt>
+              <dd>화면 확대·축소</dd>
+              <dt><kbd>Esc</kbd></dt>
+              <dd>창 닫기</dd>
+            </dl>
+          </aside>
+        )}
+
         {(status !== "ready" || !sceneReady) && (
           <div className="game-stage-overlay">
             {status === "error" ? null : (

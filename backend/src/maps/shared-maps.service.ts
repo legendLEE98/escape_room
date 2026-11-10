@@ -39,6 +39,23 @@ export class SharedMapsService {
     return this.toSummary(map, release);
   }
 
+  // Official maps for everyone's "create room" list. Newest first.
+  async listFeatured() {
+    const maps = await this.maps.find({
+      where: { featured: true, deploy: true },
+      order: { created_at: 'ASC' },
+    });
+    if (!maps.length) return [];
+    const latest = await this.latestReleases(maps.map((map) => map.id));
+    const entries: Array<SharedMapSummary & { available: boolean }> = [];
+    for (const map of maps) {
+      const release = latest.get(map.id);
+      if (!map.share_code || !release) continue;
+      entries.push({ ...(await this.toSummary(map, release)), available: true });
+    }
+    return entries;
+  }
+
   async getLayout(rawCode: string) {
     const { release } = await this.findShared(rawCode);
     return { version: release.version, releaseId: release.id, layout: release.layout };

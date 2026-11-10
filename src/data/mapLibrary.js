@@ -38,6 +38,13 @@ export async function lookupSharedMap(code) {
   return data;
 }
 
+// Official maps (e.g. the tutorial), the same for everyone.
+export async function listFeaturedMaps() {
+  const response = await fetch('/api/shared-maps');
+  if (!response.ok) throw new Error(`요청에 실패했습니다. (${response.status})`);
+  return response.json();
+}
+
 export async function listRecentMaps() {
   return Promise.all(
     readCodes().map((code) =>

@@ -35,6 +35,11 @@ export class MapInfoEntity {
   @Column({ type: 'boolean', default: false })
   deploy!: boolean;
 
+  // Official maps (e.g. the tutorial) shown to everyone when creating a room.
+  // Only set by hand in the DB — there is no API for it.
+  @Column({ type: 'boolean', default: false })
+  featured!: boolean;
+
   @Column({ type: 'varchar', length: 8, nullable: true, unique: true })
   share_code!: string | null;
 

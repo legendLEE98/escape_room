@@ -6,9 +6,10 @@ import { MapsModule } from './maps/maps.module';
 import { AuthModule } from './auth/auth.module';
 import { RedisModule } from './redis/redis.module';
 import { GameRoomsModule } from './game-rooms/game-rooms.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
-  imports: [DatabaseModule, RedisModule, AuthModule, MapsModule, GameRoomsModule],
+  imports: [DatabaseModule, RedisModule, AuthModule, MapsModule, GameRoomsModule, UploadsModule],
   controllers: [AppController],
   providers: [AppService],
 })

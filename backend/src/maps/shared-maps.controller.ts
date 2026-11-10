@@ -16,6 +16,11 @@ export class SharedMapsController {
     private readonly limiter: RateLimiterService,
   ) {}
 
+  @Get()
+  featured() {
+    return this.shared.listFeatured();
+  }
+
   @Get(':code')
   async summary(@Param('code') code: string, @Req() req: Request) {
     await this.limiter.hit(`shared-lookup:${req.ip}`, LOOKUP_LIMIT, LOOKUP_WINDOW_SECONDS);

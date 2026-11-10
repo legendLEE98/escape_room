@@ -52,6 +52,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
     ports:
       - "127.0.0.1:3100:3100"
+    volumes:
+      - uploads-data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,4 +63,5 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  uploads-data:
 
